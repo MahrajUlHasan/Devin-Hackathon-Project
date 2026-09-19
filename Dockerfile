@@ -16,7 +16,9 @@ WORKDIR /app
 # Dependencies first so a code change does not reinstall pandas.
 COPY pyproject.toml README.md ./
 COPY budapilot ./budapilot
-RUN pip install --no-cache-dir . && mkdir -p /data
+# /data is world-writable because Hugging Face Spaces run the container as uid 1000,
+# not root, and SQLite needs to create its -wal/-shm files next to the database.
+RUN pip install --no-cache-dir . && mkdir -p /data && chmod 777 /data
 
 # Frozen fixtures (if any were generated with scripts/fetch_fixtures.py) make
 # --demo-safe real. The trailing glob keeps the build working when the directory is

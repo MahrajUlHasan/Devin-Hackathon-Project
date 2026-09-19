@@ -1,3 +1,13 @@
+---
+title: BudaPilot
+emoji: 📈
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # BudaPilot
 
 A multi-agent crypto trading desk. Eight specialist Claude agents produce opinions, a

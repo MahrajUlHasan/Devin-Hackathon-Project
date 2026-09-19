@@ -118,7 +118,7 @@ dashboard up instead, which is what hosting needs.
 ## Hosting
 
 - `Dockerfile` + `railway.json` at the root. Python 3.13-slim, one process, `CMD` runs
-  `--live --interval 300 --max-minutes 120`. Override the start command on the host to
+  `--live --interval 300 --max-minutes 20`. Override the start command on the host to
   change flags.
 - The platform's `PORT` wins over `BUDAPILOT_PORT` and flips the bind to `0.0.0.0`
   (`config.Settings`). Locally, with no `PORT`, it stays on loopback.

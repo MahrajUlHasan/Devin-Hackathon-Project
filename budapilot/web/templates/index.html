@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BudaPilot — multi-agent crypto desk</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#272e38; --ink:#e6edf3; --dim:#8b949e;
+    --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; --violet:#bc8cff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { display:flex; align-items:baseline; gap:16px; padding:12px 20px;
+           border-bottom:1px solid var(--line); background:var(--panel); }
+  h1 { font-size:16px; margin:0; letter-spacing:.5px; }
+  .sub { color:var(--dim); font-size:12px; }
+  .wrap { padding:16px 20px; display:grid; gap:16px; }
+  .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .card h2 { font-size:12px; margin:0 0 8px; text-transform:uppercase;
+             letter-spacing:.8px; color:var(--dim); }
+  .stat { font-size:22px; font-weight:600; }
+  .agents { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
+  @media (max-width:1400px){ .agents { grid-template-columns:repeat(3,1fr);} }
+  @media (max-width:800px){ .agents { grid-template-columns:1fr;} }
+  .agent { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:10px; display:flex; flex-direction:column; gap:8px; min-height:150px; }
+  .agent > .head { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .agent .name { font-size:12px; font-weight:600; letter-spacing:.4px; }
+  .badge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line);
+           color:var(--dim); white-space:nowrap; }
+  .badge.haiku { color:var(--blue); border-color:#1f4d7a; }
+  .badge.sonnet { color:var(--violet); border-color:#4c3a73; }
+  .badge.opus { color:var(--amber); border-color:#6b5316; }
+  .out { background:#0b0f14; border:1px solid var(--line); border-radius:6px; padding:8px;
+         font-size:11.5px; }
+  .out .sym { color:var(--dim); font-size:10px; letter-spacing:.5px; }
+  .kv { display:flex; justify-content:space-between; gap:8px; }
+  .kv span:last-child { color:var(--ink); }
+  .kv span:first-child { color:var(--dim); }
+  .rationale { color:#c9d1d9; font-size:12px; line-height:1.55; }
+  .pm { grid-column:1/-1; border-color:#6b5316; }
+  .pm .rationale { font-size:15px; line-height:1.65; color:#f0f6fc; }
+  .over { color:var(--amber); font-size:12px; margin-top:6px; }
+  .over li { margin:2px 0; }
+  .chip { font-size:10px; padding:1px 6px; border-radius:10px; }
+  .ok { color:var(--green); } .degraded { color:var(--dim); }
+  .stub { color:var(--dim); } .fallback { color:var(--amber); }
+  .buy { color:var(--green); } .sell { color:var(--red); } .hold { color:var(--dim); }
+  .LOW{color:var(--green);} .MEDIUM{color:var(--amber);} .HIGH{color:#ff9f45;}
+  .CRITICAL{color:var(--red);font-weight:700;}
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--dim); font-weight:500; font-size:10px;
+       text-transform:uppercase; letter-spacing:.6px; padding:4px 6px; }
+  td { padding:4px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  .rej { color:var(--amber); }
+  .app { color:var(--green); }
+  button { background:#21262d; color:var(--ink); border:1px solid var(--line);
+           border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; }
+  button:hover { border-color:var(--blue); }
+  #deep { white-space:pre-wrap; font-size:12.5px; line-height:1.6; }
+  .muted { color:var(--dim); }
+  svg { display:block; width:100%; height:60px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>BUDAPILOT</h1>
+  <span class="sub">multi-agent crypto desk · paper money only</span>
+  <span class="sub" id="barinfo"></span>
+  <span class="sub" style="margin-left:auto" id="degraded"></span>
+</header>
+
+<div class="wrap">
+  <div class="row">
+    <div class="card"><h2>Equity</h2><div class="stat" id="equity">—</div>
+      <svg id="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg></div>
+    <div class="card"><h2>Cash</h2><div class="stat" id="cash">—</div></div>
+    <div class="card"><h2>Exposure</h2><div class="stat" id="exposure">—</div>
+      <div class="sub" id="exposurecap"></div></div>
+    <div class="card"><h2>Open positions</h2><div class="stat" id="openpos">—</div>
+      <div class="sub" id="opencap"></div></div>
+  </div>
+
+  <div>
+    <h2 style="font-size:12px;color:var(--dim);letter-spacing:.8px;margin:0 0 8px">
+      THE DESK — latest bar <span id="barid" class="muted"></span></h2>
+    <div class="agents" id="agents"></div>
+  </div>
+
+  <div class="row" style="grid-template-columns:1fr 1fr">
+    <div class="card">
+      <h2>Risk engine — deterministic, holds the veto</h2>
+      <table><thead><tr><th>Symbol</th><th>Action</th><th>Verdict</th><th>Reason</th></tr>
+      </thead><tbody id="risks"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Orders</h2>
+      <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Fill</th></tr>
+      </thead><tbody id="orders"></tbody></table>
+    </div>
+  </div>
+
+  <div class="row" style="grid-template-columns:1fr 1fr">
+    <div class="card">
+      <h2>Protected positions — software stop + resting stop_limit</h2>
+      <table><thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Take</th>
+      <th>Backstop</th></tr></thead><tbody id="positions"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Lessons (A7) — injected into the PM's next prompt</h2>
+      <tbody id="lessons" style="display:block"></tbody>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Deep analysis — A8, claude-opus-5 at high effort</h2>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="deepbtns"></div>
+    <div id="deep" class="muted">Pick a symbol for a full written thesis. Out of the hot path.</div>
+  </div>
+</div>
+
+<script>
+const F = (n, d=2) => (n===null||n===undefined||isNaN(n)) ? "—" : Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const money = n => "$" + F(n);
+const esc = s => String(s??"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const modelClass = m => m && m.includes("opus") ? "opus" : m && m.includes("sonnet") ? "sonnet" : m && m.includes("haiku") ? "haiku" : "";
+const actClass = a => ({BUY:"buy",SELL:"sell",HOLD:"hold"})[a] || "";
+
+function renderAgentCard(group) {
+  const cards = group.cards.map(c => {
+    const o = c.output || {};
+    let body = "";
+    if (group.key === "technical") {
+      body = `<div class="kv"><span>direction</span><span class="${actClass(o.direction)}">${esc(o.direction)}</span></div>
+              <div class="kv"><span>conviction</span><span>${F(o.conviction)}</span></div>
+              <div class="kv"><span>invalidation</span><span>${F(o.invalidation,4)}</span></div>
+              <div class="rationale">${esc(o.rationale)}</div>`;
+    } else if (group.key === "news") {
+      body = `<div class="kv"><span>sentiment</span><span>${o.sentiment>=0?"+":""}${F(o.sentiment)}</span></div>
+              <div class="kv"><span>news risk</span><span class="${esc(o.news_risk)}">${esc(o.news_risk)}</span></div>
+              <div class="kv"><span>headlines</span><span>${o.headline_count ?? 0}</span></div>
+              <div class="rationale">${esc(o.rationale)}</div>`;
+    } else if (group.key === "risk_analyst") {
+      body = `<div class="kv"><span>size mult</span><span>${F(o.size_multiplier)}×</span></div>
+              <div class="kv"><span>stop</span><span>${F(o.suggested_stop_atr,1)}×ATR</span></div>
+              <div class="rationale">${(o.concerns||[]).map(c=>"• "+esc(c)).join("<br>") || esc(o.rationale)}</div>`;
+    } else if (group.key === "scout") {
+      body = (o.candidates||[]).map(c =>
+        `<div class="kv"><span>${esc(c.symbol)}${c.vetoed?" ⛔":""}</span><span>${F(c.trend_score)}</span></div>
+         <div class="rationale" style="font-size:11px">${esc(c.vetoed ? c.veto_reason : c.thesis)}</div>`).join("")
+         || `<div class="muted">no candidates</div>`;
+    } else if (group.key === "regime") {
+      body = `<div class="kv"><span>regime</span><span>${esc(o.regime)}</span></div>
+              <div class="kv"><span>vol pct</span><span>${F(o.realized_vol_pct,0)}</span></div>
+              <div class="kv"><span>btc drift</span><span>${F((o.btc_dominance_drift||0)*100)}%</span></div>
+              <div class="rationale">${esc(o.rationale)}</div>`;
+    } else if (group.key === "pm") {
+      body = `<div class="kv"><span>${esc(o.symbol)}</span>
+                <span class="${actClass(o.action)}" style="font-size:16px;font-weight:700">${esc(o.action)}</span></div>
+              <div class="kv"><span>conviction</span><span>${F(o.conviction)}</span></div>
+              <div class="rationale">${esc(o.rationale)}</div>
+              ${(o.overrode||[]).length ? `<div class="over"><b>OVERRODE</b><ul>${o.overrode.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:""}`;
+    }
+    return `<div class="out">${c.symbol?`<div class="sym">${esc(c.symbol)}</div>`:""}${body}
+            ${c.error?`<div class="degraded" style="font-size:10px">⚠ ${esc(c.error)}</div>`:""}</div>`;
+  }).join("");
+
+  const st = group.cards[0]?.status || "";
+  return `<div class="agent ${group.key==='pm'?'pm':''}">
+    <div class="head">
+      <span class="name">${esc(group.label)}</span>
+      <span class="badge ${modelClass(group.model)}">${esc(group.model)}</span>
+    </div>
+    <div class="head">
+      <span class="chip ${esc(st)}">${esc(st||"—")}</span>
+      <span class="sub">${group.cards[0]?.latency_ms ?? "—"} ms</span>
+    </div>
+    ${cards || '<div class="muted">waiting…</div>'}
+  </div>`;
+}
+
+function spark(series) {
+  if (!series.length) return "";
+  const vals = series.map(p => p.equity);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi-lo)||1;
+  const pts = vals.map((v,i) => `${(i/(vals.length-1||1))*300},${60-((v-lo)/span)*56-2}`).join(" ");
+  const up = vals[vals.length-1] >= vals[0];
+  return `<polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/>`;
+}
+
+function render(d) {
+  const eq = d.equity.length ? d.equity[d.equity.length-1] : null;
+  document.getElementById("equity").textContent  = eq ? money(eq.equity) : "—";
+  document.getElementById("cash").textContent    = eq ? money(eq.cash) : "—";
+  document.getElementById("exposure").textContent= eq ? F(eq.exposure_pct*100,1)+"%" : "—";
+  document.getElementById("exposurecap").textContent = "cap " + (d.limits.max_exposure_pct*100) + "%";
+  document.getElementById("openpos").textContent = d.positions.length;
+  document.getElementById("opencap").textContent = "max " + d.limits.max_open;
+  document.getElementById("spark").innerHTML     = spark(d.equity);
+  document.getElementById("barid").textContent   = d.bar_id || "";
+  document.getElementById("barinfo").textContent = "bar #" + d.bar_count;
+  document.getElementById("degraded").textContent= d.degradations ? d.degradations + " degradations" : "all agents nominal";
+  document.getElementById("degraded").className  = "sub " + (d.degradations ? "fallback" : "ok");
+
+  document.getElementById("agents").innerHTML = d.panel.map(renderAgentCard).join("");
+
+  document.getElementById("risks").innerHTML = d.risks.map(r => `<tr>
+    <td>${esc(r.symbol)}</td><td class="${actClass(r.action)}">${esc(r.action)}</td>
+    <td class="${r.approved?'app':'rej'}">${r.approved?'APPROVED':'REJECTED'}</td>
+    <td class="${r.approved?'':'rej'}">${esc(r.reason)}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">no rulings yet</td></tr>`;
+
+  document.getElementById("orders").innerHTML = d.orders.map(o => `<tr>
+    <td>${esc(o.symbol)}</td><td class="${o.side==='buy'?'buy':'sell'}">${esc(o.side)}</td>
+    <td>${F(o.qty,6)}</td><td>${esc(o.status)}</td><td>${F(o.filled_avg_price,4)}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">no orders yet</td></tr>`;
+
+  document.getElementById("positions").innerHTML = d.positions.map(p => `<tr>
+    <td>${esc(p.symbol)}</td><td>${F(p.qty,6)}</td><td>${F(p.entry,4)}</td>
+    <td class="sell">${F(p.stop_px,4)}</td><td class="buy">${F(p.take_px,4)}</td>
+    <td class="${p.broker_stop_order_id?'ok':'rej'}">${p.broker_stop_order_id?'armed':'SOFTWARE ONLY'}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">flat</td></tr>`;
+
+  document.getElementById("lessons").innerHTML = d.lessons.map(l =>
+    `<div style="border-top:1px solid var(--line);padding:6px 0">
+       <span class="${l.outcome_pct>=0?'buy':'sell'}">${esc(l.symbol)} ${l.outcome_pct>=0?"+":""}${F(l.outcome_pct)}%</span>
+       <span class="muted"> (${esc(l.exit_reason)})</span>
+       <div class="rationale">${esc(l.lesson)}</div></div>`).join("")
+    || `<div class="muted">no closed trades yet</div>`;
+
+  if (!document.getElementById("deepbtns").dataset.built) {
+    const syms = [...new Set(d.panel.flatMap(g => g.cards.map(c=>c.symbol)).filter(Boolean))];
+    if (syms.length) {
+      document.getElementById("deepbtns").dataset.built = "1";
+      document.getElementById("deepbtns").innerHTML = syms.map(s =>
+        `<button onclick="deepAnalyse('${s}')">${esc(s)}</button>`).join("");
+    }
+  }
+}
+
+async function deepAnalyse(symbol) {
+  const el = document.getElementById("deep");
+  el.className = "muted";
+  el.textContent = `Running claude-opus-5 at high effort on ${symbol}… this takes a while on purpose.`;
+  try {
+    const r = await fetch(`/api/deep/${encodeURIComponent(symbol)}`, {method:"POST"});
+    const j = await r.json();
+    if (j.error) { el.textContent = "Error: " + j.error; return; }
+    const a = j.analysis;
+    el.className = "";
+    el.innerHTML = `<div class="sub">${esc(j.model)} · ${j.latency_ms} ms · ${esc(j.status)}</div>
+      <h3 style="margin:8px 0 4px">${esc(a.symbol)} — <span class="${actClass(a.verdict)}">${esc(a.verdict)}</span>
+        <span class="muted">conviction ${F(a.conviction)}</span></h3>
+      <div class="rationale">${esc(a.thesis)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px">
+        <div><b class="buy">BULL</b><ul>${(a.bull_case||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>
+        <div><b class="sell">BEAR</b><ul>${(a.bear_case||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>
+      </div>`;
+  } catch (e) { el.textContent = "Request failed: " + e; }
+}
+
+render({{ snapshot | tojson }});
+const es = new EventSource("/stream");
+es.addEventListener("update", e => render(JSON.parse(e.data)));
+</script>
+</body>
+</html>

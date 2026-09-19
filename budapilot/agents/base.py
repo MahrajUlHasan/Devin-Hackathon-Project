@@ -19,33 +19,52 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from budapilot.config import MODELS, TIMEOUTS, settings
+from budapilot.agents.providers import LLMProvider, build_provider
+from budapilot.config import MODELS, TIMEOUTS, models_for, settings
 from budapilot.contracts import AgentResult, AgentStatus
 
 TOut = TypeVar("TOut", bound=BaseModel)
 
 
 class AgentRuntime:
-    """Shared Anthropic client. ``offline=True`` forces every agent to its stub."""
+    """Shared LLM provider. ``offline=True`` forces every agent to its stub.
 
-    def __init__(self, *, offline: bool = False, api_key: str | None = None) -> None:
-        key = api_key if api_key is not None else settings.anthropic_key
+    ``provider`` selects the vendor: ``"anthropic"``, ``"gemini"``, or ``None`` to
+    resolve from ``LLM_PROVIDER`` / whichever key is present. The agents themselves
+    know nothing about this -- they get a model id and a validated Pydantic object.
+    """
+
+    def __init__(
+        self,
+        *,
+        offline: bool = False,
+        api_key: str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        resolved, resolved_key = settings.resolve_provider(provider)
+        key = api_key if api_key is not None else resolved_key
+
+        self.provider_name = resolved
+        self.models = models_for(resolved)
         self.offline = offline or not key
-        self._client: Any = None
+        self._provider: LLMProvider | None = None
         if not self.offline:
-            from anthropic import AsyncAnthropic
+            self._provider = build_provider(resolved, key)
 
-            self._client = AsyncAnthropic(api_key=key)
+    @property
+    def provider(self) -> LLMProvider:
+        if self._provider is None:
+            raise RuntimeError("AgentRuntime is offline; no LLM provider available.")
+        return self._provider
 
     @property
     def client(self) -> Any:
-        if self._client is None:
-            raise RuntimeError("AgentRuntime is offline; no Anthropic client available.")
-        return self._client
+        """The underlying vendor SDK client. Tests patch this."""
+        return self.provider.client
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.close()
+        if self._provider is not None:
+            await self._provider.aclose()
 
 
 class Agent(Generic[TOut]):
@@ -59,7 +78,7 @@ class Agent(Generic[TOut]):
 
     def __init__(self, runtime: AgentRuntime) -> None:
         self.runtime = runtime
-        self.model = MODELS.get(self.name, "claude-sonnet-5")
+        self.model = runtime.models.get(self.name) or MODELS.get(self.name, "claude-sonnet-5")
         self.timeout_s = TIMEOUTS.get(self.name, 10.0)
 
     # -- subclass hooks ----------------------------------------------------------------
@@ -110,32 +129,15 @@ class Agent(Generic[TOut]):
         )
 
     async def _call(self, ctx: Any) -> tuple[TOut, tuple[int, int]]:
-        output_config: dict[str, Any] | None = {"effort": self.effort} if self.effort else None
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "system": [
-                {
-                    "type": "text",
-                    "text": self.system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            "messages": [{"role": "user", "content": self.user_prompt(ctx)}],
-            "output_format": self.output_model,
-        }
-        if output_config:
-            kwargs["output_config"] = output_config
-
-        resp = await self.runtime.client.messages.parse(**kwargs)
-        parsed = resp.parsed_output
-        if parsed is None:
-            raise ValueError("model returned no parsable structured output")
-        usage = (
-            getattr(resp.usage, "input_tokens", 0) or 0,
-            getattr(resp.usage, "output_tokens", 0) or 0,
+        output, usage = await self.runtime.provider.complete(
+            model=self.model,
+            system=self.system,
+            user=self.user_prompt(ctx),
+            output_model=self.output_model,
+            max_tokens=self.max_tokens,
+            effort=self.effort,
         )
-        return parsed, usage
+        return output, usage  # type: ignore[return-value]
 
     def _degraded(
         self, ctx: Any, started: float, symbol: str | None, error: str

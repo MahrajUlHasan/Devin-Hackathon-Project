@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-import pytest
+import os
 
-from budapilot.contracts import (
+# Pin the provider before budapilot.config is imported and builds its Settings
+# singleton. Without this the suite reads whichever API key happens to be in the
+# developer's .env, so adding a Gemini key would flip the default and break every
+# test that asserts a Claude model id -- a failure with no connection to the change
+# that caused it. Tests that care about provider selection build their own Settings.
+# load_dotenv does not override variables that are already set, so this wins.
+os.environ["LLM_PROVIDER"] = "anthropic"
+
+import pytest  # noqa: E402
+
+from budapilot.contracts import (  # noqa: E402
     Action,
     AssetSpec,
     FeatureBundle,

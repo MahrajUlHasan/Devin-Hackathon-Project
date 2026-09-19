@@ -123,7 +123,7 @@ async def test_advocates_never_raise():
         async def _call(self, c):
             raise RuntimeError("model down")
 
-    agent = Boom(AgentRuntime(offline=False, api_key="sk-fake"))
+    agent = Boom(AgentRuntime(offline=False, api_key="sk-fake", provider="anthropic"))
     result = await agent.run(ctx())
     assert result.status is AgentStatus.DEGRADED
     assert result.output.side == "BULL"

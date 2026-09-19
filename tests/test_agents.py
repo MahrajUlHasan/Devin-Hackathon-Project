@@ -131,7 +131,7 @@ class Boom(Agent):
     ],
 )
 async def test_agent_degrades_instead_of_raising(exc):
-    runtime = AgentRuntime(offline=False, api_key="sk-fake-not-used")
+    runtime = AgentRuntime(offline=False, api_key="sk-fake-not-used", provider="anthropic")
     agent = Boom(runtime, exc)
     result = await agent.run(TechnicalContext(features=bundle("BTC/USD")))
 
@@ -145,7 +145,7 @@ async def test_agent_degrades_on_timeout():
         async def _call(self, ctx):
             await asyncio.sleep(5)
 
-    runtime = AgentRuntime(offline=False, api_key="sk-fake-not-used")
+    runtime = AgentRuntime(offline=False, api_key="sk-fake-not-used", provider="anthropic")
     agent = Slow(runtime, RuntimeError())
     agent.timeout_s = 0.01
 
@@ -162,7 +162,7 @@ async def test_runtime_without_a_key_is_offline():
 
 
 async def test_degraded_pm_is_marked_fallback_and_still_trades():
-    bus = AgentBus(AgentRuntime(offline=False, api_key="sk-fake-not-used"))
+    bus = AgentBus(AgentRuntime(offline=False, api_key="sk-fake-not-used", provider="anthropic"))
 
     # Force every agent to fail; the PM's stub is the deterministic arbiter.
     async def explode(ctx):

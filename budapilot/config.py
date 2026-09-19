@@ -29,23 +29,58 @@ MAX_CANDIDATES = 3
 # Models -- one line per agent so the allocation is auditable at a glance
 # --------------------------------------------------------------------------------------
 
-MODEL_HAIKU = "claude-haiku-4-5"
-MODEL_SONNET = "claude-sonnet-5"
-MODEL_OPUS = "claude-opus-5"
+# Agents are assigned a *tier*, not a model id. The reasoning behind each assignment
+# is about the job, not the vendor -- "ranking six symbols is nearly mechanical" is
+# true whoever serves the tokens -- so the tier survives a provider swap and only the
+# lookup table below changes.
+#
+#   FAST  high volume, near-mechanical: ranking, labelling, scoring headlines
+#   MID   per-symbol reasoning in the hot path, where nuance pays
+#   DEEP  the one call that becomes an order, and the on-demand showpiece
+FAST, MID, DEEP = "fast", "mid", "deep"
 
-MODELS: dict[str, str] = {
-    "scout": MODEL_HAIKU,  # A1 ranking is arithmetic; model writes justification
-    "headline_scorer": MODEL_HAIKU,  # A3 first stage, high volume
-    "news": MODEL_SONNET,  # A3 synthesis into a risk rating
-    "technical": MODEL_SONNET,  # A2 per-symbol reasoning, hot path
-    "regime": MODEL_HAIKU,  # A4 cached 30m, cheap labelling
-    "risk_analyst": MODEL_SONNET,  # A5 advisory judgment
-    "pm": MODEL_OPUS,  # A6 the one call that becomes an order
-    "reflection": MODEL_SONNET,  # A7 off the hot path
-    "deep": MODEL_OPUS,  # A8 human-triggered showpiece, effort=high
-    "bull": MODEL_SONNET,  # A9 advocacy needs reasoning, not just labelling
-    "bear": MODEL_SONNET,  # A10 ditto -- a weak bear case is worthless
+AGENT_TIERS: dict[str, str] = {
+    "scout": FAST,  # A1 ranking is arithmetic; model writes justification
+    "headline_scorer": FAST,  # A3 first stage, high volume
+    "news": MID,  # A3 synthesis into a risk rating
+    "technical": MID,  # A2 per-symbol reasoning, hot path
+    "regime": FAST,  # A4 cached 30m, cheap labelling
+    "risk_analyst": MID,  # A5 advisory judgment
+    "pm": DEEP,  # A6 the one call that becomes an order
+    "reflection": MID,  # A7 off the hot path
+    "deep": DEEP,  # A8 human-triggered showpiece, effort=high
+    "bull": MID,  # A9 advocacy needs reasoning, not just labelling
+    "bear": MID,  # A10 ditto -- a weak bear case is worthless
 }
+
+PROVIDER_MODELS: dict[str, dict[str, str]] = {
+    "anthropic": {
+        FAST: os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5"),
+        MID: os.getenv("CLAUDE_MODEL_MID", "claude-sonnet-5"),
+        DEEP: os.getenv("CLAUDE_MODEL_DEEP", "claude-opus-5"),
+    },
+    "gemini": {
+        # Rolling aliases rather than pinned versions: a hackathon demo that breaks
+        # because a dated snapshot was retired is a bad trade for reproducibility we
+        # are not otherwise relying on. Override per tier via env if you need a pin.
+        FAST: os.getenv("GEMINI_MODEL_FAST", "gemini-flash-lite-latest"),
+        MID: os.getenv("GEMINI_MODEL_MID", "gemini-flash-latest"),
+        DEEP: os.getenv("GEMINI_MODEL_DEEP", "gemini-pro-latest"),
+    },
+}
+
+DEFAULT_PROVIDER = "anthropic"
+
+
+def models_for(provider: str) -> dict[str, str]:
+    """Agent name -> model id for one provider."""
+    tiers = PROVIDER_MODELS[provider]
+    return {agent: tiers[tier] for agent, tier in AGENT_TIERS.items()}
+
+
+# The Claude allocation, kept as a module constant so existing imports and the docs
+# that quote it still read correctly. Live lookups go through the runtime's provider.
+MODELS: dict[str, str] = models_for(DEFAULT_PROVIDER)
 
 # Per-agent timeouts (seconds). On expiry the agent degrades rather than raising.
 TIMEOUTS: dict[str, float] = {
@@ -121,6 +156,10 @@ class Settings:
         default_factory=lambda: os.getenv("ALPACA_PAPER", "true").lower() != "false"
     )
     anthropic_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
+    gemini_key: str = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    )
+    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "auto").lower())
     db_path: str = field(default_factory=lambda: os.getenv("BUDAPILOT_DB", "budapilot.db"))
     host: str = field(default_factory=lambda: os.getenv("BUDAPILOT_HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(os.getenv("BUDAPILOT_PORT", "8000")))
@@ -132,6 +171,34 @@ class Settings:
     @property
     def has_anthropic(self) -> bool:
         return bool(self.anthropic_key)
+
+    @property
+    def has_gemini(self) -> bool:
+        return bool(self.gemini_key)
+
+    def key_for(self, provider: str) -> str:
+        return {"anthropic": self.anthropic_key, "gemini": self.gemini_key}.get(provider, "")
+
+    def resolve_provider(self, requested: str | None = None) -> tuple[str, str]:
+        """Pick a provider and its key. Returns ``(provider, key)``; key is "" offline.
+
+        An explicit request is honoured even when its key is missing, rather than
+        quietly falling through to the other vendor. Asking for Claude and silently
+        getting Gemini -- or vice versa -- is the kind of surprise that has you
+        debugging prompt quality when the real problem is that you are talking to a
+        different model than you think.
+        """
+        want = (requested or self.llm_provider or "auto").lower()
+        if want != "auto":
+            if want not in PROVIDER_MODELS:
+                raise ValueError(
+                    f"unknown provider {want!r}; expected one of {sorted(PROVIDER_MODELS)}"
+                )
+            return want, self.key_for(want)
+        for provider in (DEFAULT_PROVIDER, *PROVIDER_MODELS):
+            if self.key_for(provider):
+                return provider, self.key_for(provider)
+        return DEFAULT_PROVIDER, ""
 
     def assert_paper_only(self) -> None:
         """The live-trading path is unimplemented by construction. (NFR4)"""

@@ -23,6 +23,7 @@ from budapilot.config import (
     BAR_MINUTES,
     DEBATE_ROUNDS,
     ENABLE_DEBATE,
+    PROVIDER_MODELS,
     WATCHLIST,
     settings,
 )
@@ -67,11 +68,24 @@ def build(args: argparse.Namespace) -> tuple[TradingLoop, Journal]:
         log.info("Simulated broker, $%s starting equity.", f"{args.cash:,.0f}")
 
     # --- agents -------------------------------------------------------------------
-    runtime = AgentRuntime(offline=args.demo_safe or args.stub_agents)
+    runtime = AgentRuntime(
+        offline=args.demo_safe or args.stub_agents, provider=args.provider
+    )
     if runtime.offline:
-        log.info("Agents are stubbed (deterministic, no API calls).")
-    elif not settings.has_anthropic:
-        log.warning("No ANTHROPIC_API_KEY; agents will fall back to stubs.")
+        reason = (
+            "requested"
+            if (args.demo_safe or args.stub_agents)
+            else f"no API key for provider '{runtime.provider_name}'"
+        )
+        log.info("Agents are stubbed (deterministic, no API calls) -- %s.", reason)
+        if reason != "requested":
+            log.warning(
+                "Set %s in .env, or pass --provider to pick the other one.",
+                "GEMINI_API_KEY" if runtime.provider_name == "gemini" else "ANTHROPIC_API_KEY",
+            )
+    else:
+        tiers = sorted(set(runtime.models.values()))
+        log.info("LLM provider: %s  |  models: %s", runtime.provider_name, ", ".join(tiers))
 
     debate = args.debate or ENABLE_DEBATE
     if debate:
@@ -133,6 +147,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--stub-agents", action="store_true", help="Real data, deterministic agents."
+    )
+    parser.add_argument(
+        "--provider",
+        choices=sorted(PROVIDER_MODELS),
+        default=None,
+        help="Which LLM vendor runs the agents. Default: LLM_PROVIDER from .env, or "
+        "whichever API key is present.",
     )
     parser.add_argument(
         "--debate",

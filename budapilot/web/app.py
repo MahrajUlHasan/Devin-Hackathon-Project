@@ -50,6 +50,14 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
     app.state.journal = journal
     app.state.loop = loop
 
+    # The header badges must name the models actually in use, not the Claude defaults.
+    # A dashboard that says "claude-opus-5" while Gemini is answering is worse than no
+    # badge at all -- it is a wrong answer to the first question a judge asks.
+    runtime = getattr(getattr(loop, "bus", None), "runtime", None)
+    agent_models: dict[str, str] = getattr(runtime, "models", None) or MODELS
+    provider_name: str = getattr(runtime, "provider_name", "anthropic")
+    agents_stubbed: bool = bool(getattr(runtime, "offline", False))
+
     def snapshot() -> dict[str, Any]:
         bar_id = journal.latest_bar_id()
         runs = journal.runs_for_bar(bar_id) if bar_id else []
@@ -87,7 +95,7 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
             if not cards and key in ("bull", "bear"):
                 continue
             panel.append(
-                {"key": key, "label": label, "model": MODELS.get(key, ""), "cards": cards}
+                {"key": key, "label": label, "model": agent_models.get(key, ""), "cards": cards}
             )
 
         proposals = journal.latest_proposals(8)
@@ -141,12 +149,13 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
                 "max_open": MAX_OPEN_POSITIONS,
             },
             "bar_count": getattr(loop, "bar_count", 0) if loop else 0,
+            "provider": {"name": provider_name, "stubbed": agents_stubbed},
         }
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(
-            request, "index.html", {"snapshot": snapshot(), "models": MODELS}
+            request, "index.html", {"snapshot": snapshot(), "models": agent_models}
         )
 
     @app.get("/api/snapshot")

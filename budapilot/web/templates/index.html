@@ -87,9 +87,18 @@
   /* analytics */
   .analytics { grid-template-columns:2fr 1fr 1fr; }
   @media (max-width:1100px){ .analytics { grid-template-columns:1fr; } }
-  .hbar { display:grid; grid-template-columns:130px 1fr 60px; gap:8px; align-items:center; font-size:12px; margin:4px 0; }
-  .hbar .track { height:8px; border-radius:4px; background:var(--line); overflow:hidden; }
-  .hbar .track i { display:block; height:100%; border-radius:4px; }
+  .perf { display:grid; grid-template-columns:120px 1fr 70px 60px; gap:6px 12px; align-items:center; font-size:12px; }
+  .perf .h { color:var(--faint); font-size:10px; text-transform:uppercase; letter-spacing:.6px; }
+  .perf .name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .perf .stack { display:flex; height:10px; border-radius:5px; background:var(--line); overflow:hidden; }
+  .perf .stack i { display:block; height:100%; min-width:0; }
+  .perf .ms { text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .perf .runs { text-align:right; color:var(--dim); font-size:11px; }
+  .perf .lat { height:2px; background:var(--blue); border-radius:1px; margin-top:-4px; opacity:.55; }
+  .errs { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; font-size:11.5px; }
+  .errs .e { display:grid; grid-template-columns:34px 1fr; gap:8px; padding:4px 0; align-items:baseline; }
+  .errs .e b { color:var(--red); font-family:ui-monospace,Menlo,Consolas,monospace; text-align:right; }
+  .errs .e .who { color:var(--faint); font-size:10.5px; }
   .legend { display:flex; gap:10px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-top:8px; }
   .legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
   .mini { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; font-size:12px; }
@@ -216,7 +225,7 @@
 
   <!-- Analytics -->
   <div class="grid analytics">
-    <div class="card"><h2>Agent performance <span class="sub">this session · avg latency, status mix</span></h2><div id="agentperf"></div>
+    <div class="card"><h2>Agent performance <span class="sub">this session</span></h2><div id="agentperf"></div>
       <div class="legend"><span><i style="background:var(--green)"></i>ok</span><span><i style="background:var(--amber)"></i>fallback</span><span><i style="background:var(--red)"></i>degraded</span><span><i style="background:var(--faint)"></i>stub</span></div></div>
     <div class="card"><h2>PM decisions</h2><div class="donut"><svg id="donut" viewBox="0 0 36 36"></svg><div id="donutlegend" class="sub"></div></div>
       <div id="rejectreasons" class="sub" style="margin-top:10px"></div></div>
@@ -517,6 +526,18 @@ function useRecommended() {
 }
 
 /* ---------- analytics ---------- */
+/* Vendor errors are JSON blobs hundreds of characters long. Pull out the sentence a
+   human needs: the message field, or the first clause before the JSON starts. */
+function shortError(e) {
+  if (!e) return "";
+  const parts = e.split("; fallback ");
+  const one = s => {
+    const m = s.match(/'message':\s*'([^']{5,160})/) || s.match(/"message":\s*"([^"]{5,160})/);
+    if (m) return m[1].split("\n")[0];
+    return s.split(/[{(]/)[0].trim().slice(0, 120);
+  };
+  return parts.length > 1 ? `${one(parts[0])} → fallback: ${one(parts[1])}` : one(parts[0]);
+}
 function renderAnalytics(d) {
   const a = d.analytics || {agents:[],actions:[],reject_reasons:[],trades:{},orders:[]};
   // agent performance: merge rows by agent (a fallback creates a second model row)
@@ -525,14 +546,27 @@ function renderAnalytics(d) {
     g.runs += r.runs; g.ms += r.avg_ms*r.runs; g.ok += r.ok; g.degraded += r.degraded; g.fallback += r.fallback; g.stub += r.stub; g.models.add(r.model); g.tin += r.tokens_in||0; g.tout += r.tokens_out||0; });
   const rows = Object.values(byAgent).sort((x,y)=>y.ms/y.runs - x.ms/x.runs);
   const maxMs = Math.max(1, ...rows.map(r=>r.ms/r.runs));
-  document.getElementById("agentperf").innerHTML = rows.map(r => {
-    const avg = r.ms/r.runs, w = avg/maxMs*100;
-    const seg = (n,c) => n ? `<i style="width:${n/r.runs*100}%;background:${c};display:inline-block;border-radius:0"></i>` : "";
-    return `<div class="hbar"><span title="${[...r.models].join(', ')}">${esc(r.agent)}</span>
-      <div class="track" title="${r.ok} ok · ${r.fallback} fallback · ${r.degraded} degraded · ${r.stub} stub">${seg(r.ok,"var(--green)")}${seg(r.fallback,"var(--amber)")}${seg(r.degraded,"var(--red)")}${seg(r.stub,"var(--faint)")}</div>
-      <span class="mono" style="text-align:right">${F(avg,0)}ms</span></div>
-      <div class="hbar" style="margin-top:-4px"><span></span><div class="track" style="height:3px"><i style="width:${w}%;background:var(--blue)"></i></div><span class="sub" style="text-align:right">${r.runs} runs</span></div>`;
-  }).join("") || `<div class="muted">no agent runs yet this session</div>`;
+  // One row per agent: a stacked status bar (flex, so segments never collapse or gap),
+  // avg latency, run count. A thin blue line under the bar is latency relative to the
+  // slowest agent, so the whole picture reads without a second row.
+  const body = rows.map(r => {
+    const avg = r.ms/r.runs;
+    const seg = (n,c,label) => n ? `<i style="flex:${n} 1 0;background:${c}" title="${n} ${label}"></i>` : "";
+    return `<div class="name" title="${[...r.models].join(', ')}">${esc(r.agent)}</div>
+      <div><div class="stack" title="${r.ok} ok · ${r.fallback} fallback · ${r.degraded} degraded · ${r.stub} stub">
+        ${seg(r.ok,"var(--green)","ok")}${seg(r.fallback,"var(--amber)","fallback")}${seg(r.degraded,"var(--red)","degraded")}${seg(r.stub,"var(--faint)","stub")}</div>
+        <div class="lat" style="width:${avg/maxMs*100}%"></div></div>
+      <div class="ms">${F(avg,0)} ms</div>
+      <div class="runs">${r.runs} runs</div>`;
+  }).join("");
+  const okShare = rows.reduce((s,r)=>s+r.ok,0) / Math.max(1, rows.reduce((s,r)=>s+r.runs,0));
+  const errs = (a.errors||[]).length ? `<div class="errs">
+      <div class="sub" style="margin-bottom:4px">Why calls failed <span class="muted">· ${F(okShare*100,0)}% of runs answered by a live model</span></div>
+      ${a.errors.map(e => `<div class="e"><b>${e.n}×</b><div>${esc(shortError(e.error))}<div class="who">${esc(e.agents)} · last ${tm(e.last_ts)}</div></div></div>`).join("")}
+    </div>` : "";
+  document.getElementById("agentperf").innerHTML = rows.length
+    ? `<div class="perf"><div class="h">agent</div><div class="h">status mix · latency</div><div class="h" style="text-align:right">avg</div><div class="h" style="text-align:right">runs</div>${body}</div>${errs}`
+    : `<div class="muted">no agent runs yet this session</div>`;
   const tin = rows.reduce((s,r)=>s+r.tin,0), tout = rows.reduce((s,r)=>s+r.tout,0);
   document.getElementById("tokens").textContent = tin||tout ? `${F(tin,0)} tokens in · ${F(tout,0)} out this session` : "";
 

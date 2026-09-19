@@ -12,6 +12,7 @@ against it.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -99,6 +100,23 @@ CREATE INDEX IF NOT EXISTS idx_risk_ts ON risk_decisions(ts DESC);
 
 def _iso(ts: datetime | None = None) -> str:
     return (ts or utcnow()).isoformat()
+
+
+_VOLATILE = [
+    re.compile(r",?\s*'request_id':\s*'[^']*'"),
+    re.compile(r"Please retry in [\d.]+s\.?"),
+    re.compile(r"'retryDelay':\s*'[^']*'"),
+    re.compile(r"req_[A-Za-z0-9]+"),
+    re.compile(r"timeout after [\d.]+s"),
+]
+
+
+def _error_kind(error: str) -> str:
+    """Collapse one error string to the part that identifies its *kind*."""
+    kind = error
+    for pat in _VOLATILE:
+        kind = pat.sub(lambda m: "timeout" if m.group(0).startswith("timeout") else "", kind)
+    return kind[:300]
 
 
 class Journal:
@@ -395,6 +413,32 @@ class Journal:
             (agent, since, limit),
         )
 
+    def _grouped_errors(self, since: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Degradations since ``since``, grouped by *kind* of error.
+
+        Vendor errors carry a per-request id and a "retry in 23.5s" hint, so grouping on
+        the raw string puts a hundred identical billing failures into a hundred groups
+        of one. Strip the volatile parts first, then count.
+        """
+        rows = self.query(
+            "SELECT agent, error, ts FROM degradations WHERE ts >= ? ORDER BY id",
+            (since,),
+        )
+        groups: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            key = _error_kind(r["error"] or "")
+            g = groups.setdefault(
+                key, {"error": key, "n": 0, "agents": [], "last_ts": r["ts"]}
+            )
+            g["n"] += 1
+            g["last_ts"] = max(g["last_ts"], r["ts"])
+            if r["agent"] not in g["agents"]:
+                g["agents"].append(r["agent"])
+        out = sorted(groups.values(), key=lambda g: g["n"], reverse=True)[:limit]
+        for g in out:
+            g["agents"] = ",".join(g["agents"])
+        return out
+
     def analytics(self, since: str) -> dict[str, Any]:
         """Session-scoped desk analytics for the dashboard. Reads only."""
         agents = self.query(
@@ -432,6 +476,9 @@ class Journal:
             "SELECT side, intent, COUNT(*) AS n FROM orders WHERE ts >= ? GROUP BY side, intent",
             (since,),
         )
+        # Why agents failed, grouped. Without this the status bar says "degraded" and
+        # nobody can tell an expired credit card from a timeout without opening a DB.
+        errors = self._grouped_errors(since)
         r = risk[0] if risk else {}
         t = trades[0] if trades else {}
         return {
@@ -449,4 +496,5 @@ class Journal:
                 "takes": t.get("takes") or 0,
             },
             "orders": orders,
+            "errors": errors,
         }

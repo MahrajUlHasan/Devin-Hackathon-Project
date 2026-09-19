@@ -134,6 +134,38 @@ async def test_snapshot_carries_provider_and_analytics(journal):
     a = snap["analytics"]
     assert {r["agent"] for r in a["agents"]} >= {"scout", "pm"}
     assert sum(x["n"] for x in a["actions"]) == 1
+    assert a["errors"] == []  # stubs never fail
+
+
+async def test_analytics_groups_failure_reasons_so_the_dashboard_can_say_why(journal):
+    """A wall of red 'degraded' bars is useless without the reason next to it."""
+    loop = build_loop(journal)
+    app = create_app(journal, loop)
+    for sym in ("BTC/USD", "ETH/USD", "SOL/USD"):
+        journal.log_agent_run(_stale_failure(sym), "bar-1")
+
+    async with _client(app) as c:
+        errs = (await c.get("/api/snapshot")).json()["analytics"]["errors"]
+
+    assert len(errs) == 1
+    assert errs[0]["n"] == 3
+    assert "429" in errs[0]["error"] and errs[0]["agents"] == "technical"
+
+
+def test_error_kinds_ignore_request_ids_and_retry_hints():
+    """105 identical billing failures must be one group of 105, not 105 groups of one."""
+    from budapilot.journal.store import _error_kind
+
+    a = ("BadRequestError: Error code: 400 - {'type': 'error', 'error': {'message': "
+         "'Your credit balance is too low'}, 'request_id': 'req_011CfCyi2qTeZmL7Tn8fFWnb'}")
+    b = a.replace("req_011CfCyi2qTeZmL7Tn8fFWnb", "req_011CfCyhzJero2ewpCRYdNHS")
+    assert _error_kind(a) == _error_kind(b)
+
+    g1 = "429 RESOURCE_EXHAUSTED ... Please retry in 23.588662194s. 'retryDelay': '23s'"
+    g2 = "429 RESOURCE_EXHAUSTED ... Please retry in 0.546s. 'retryDelay': '0s'"
+    assert _error_kind(g1) == _error_kind(g2)
+
+    assert _error_kind("timeout after 10.0s") == _error_kind("timeout after 8.0s") == "timeout"
 
 
 # -- market tape and suggestions -----------------------------------------------------

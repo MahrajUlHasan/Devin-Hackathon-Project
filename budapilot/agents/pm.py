@@ -52,6 +52,10 @@ setup to act.
 Risk Analyst advised requires a specific, stated reason.
 - Lessons from closed trades are your own desk's history. Weigh them; they are evidence, \
 not rules.
+- Where a BULL and BEAR case are shown, they are advocates who were assigned a side, not \
+neutral analysts. Judge the arguments, not the confidence numbers. Pay particular \
+attention to what each side conceded -- an advocate who concedes nothing has told you \
+less than one who concedes something real.
 
 `conviction` below {MIN_CONVICTION:.2f} will be forced to HOLD downstream, so do not \
 propose an action you cannot honestly rate above it.
@@ -135,6 +139,18 @@ class PMAgent(Agent[TradeProposal]):
                 f"    concerns: {'; '.join(r.concerns) if r.concerns else 'none'}",
                 f"    {r.rationale}",
             ]
+
+            if op.debate:
+                for case in (op.debate.bull, op.debate.bear):
+                    parts += [
+                        f"  {case.side} (confidence {case.confidence:.2f}): "
+                        f"{case.strongest_point}",
+                        *[f"    - {c}" for c in case.claims],
+                    ]
+                    if case.rebuttal:
+                        parts.append(f"    rebuttal: {case.rebuttal}")
+                    if case.conceded:
+                        parts.append(f"    concedes: {case.conceded}")
 
         parts += ["", "PORTFOLIO", portfolio_block(ctx.portfolio)]
 

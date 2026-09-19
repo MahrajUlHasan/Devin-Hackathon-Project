@@ -22,12 +22,14 @@ from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
 from budapilot.config import (
+    MAX_DAILY_DRAWDOWN_PCT,
     MAX_OPEN_POSITIONS,
     MAX_POSITION_PCT,
     MAX_TOTAL_EXPOSURE_PCT,
     MODELS,
 )
 from budapilot.journal.store import Journal
+from budapilot.risk.session import drawdown_from
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -37,6 +39,8 @@ AGENT_ORDER = [
     ("technical", "A2 Technical"),
     ("news", "A3 News & Risk"),
     ("risk_analyst", "A5 Risk Analyst"),
+    ("bull", "A9 Bull"),
+    ("bear", "A10 Bear"),
     ("pm", "A6 Portfolio Manager"),
 ]
 
@@ -78,7 +82,13 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
                         "output": output,
                     }
                 )
-            panel.append({"key": key, "label": label, "model": MODELS.get(key, ""), "cards": cards})
+            # Bull/Bear only exist when the debate is enabled; an empty card would
+            # read as a failed agent rather than an absent one.
+            if not cards and key in ("bull", "bear"):
+                continue
+            panel.append(
+                {"key": key, "label": label, "model": MODELS.get(key, ""), "cards": cards}
+            )
 
         proposals = journal.latest_proposals(8)
         for p in proposals:
@@ -91,6 +101,28 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
         equity = journal.equity_series(200)
         positions = [p.model_dump(mode="json") for p in journal.load_protected()]
 
+        # Heatmap: rows are symbols, columns are bars, oldest left.
+        grid_rows = journal.disagreement_grid(24)
+        bar_order: list[str] = []
+        for r in grid_rows:
+            if r["bar_id"] not in bar_order:
+                bar_order.append(r["bar_id"])
+        heat_symbols = sorted({r["symbol"] for r in grid_rows})
+        cells = {(r["bar_id"], r["symbol"]): r for r in grid_rows}
+        heatmap = {
+            "bars": bar_order,
+            "symbols": heat_symbols,
+            "rows": [
+                [cells.get((b, s)) for b in bar_order] for s in heat_symbols
+            ],
+        }
+
+        state = journal.load_session()
+        session = state.model_dump(mode="json") if state else None
+        if state and equity:
+            session["drawdown_pct"] = drawdown_from(state, equity[-1]["equity"])
+            session["max_drawdown_pct"] = MAX_DAILY_DRAWDOWN_PCT
+
         return {
             "bar_id": bar_id,
             "panel": panel,
@@ -101,6 +133,8 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
             "positions": positions,
             "lessons": [le.model_dump(mode="json") for le in journal.recent_lessons(5)],
             "degradations": journal.degradation_count(),
+            "heatmap": heatmap,
+            "session": session,
             "limits": {
                 "max_position_pct": MAX_POSITION_PCT,
                 "max_exposure_pct": MAX_TOTAL_EXPOSURE_PCT,
@@ -127,7 +161,11 @@ def create_app(journal: Journal, loop: Any = None) -> FastAPI:
                 if await request.is_disconnected():
                     break
                 data = snapshot()
-                fingerprint = f"{data['bar_id']}-{len(data['proposals'])}-{len(data['orders'])}"
+                sess = data.get("session") or {}
+                fingerprint = (
+                    f"{data['bar_id']}-{len(data['proposals'])}-{len(data['orders'])}"
+                    f"-{sess.get('halted')}-{sess.get('bar_index')}"
+                )
                 if fingerprint != last:
                     last = fingerprint
                     yield {"event": "update", "data": json.dumps(data)}

@@ -14,7 +14,7 @@ Two invariants are encoded here and enforced again downstream in the risk engine
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -272,6 +272,48 @@ class DeepAnalysis(BaseModel):
     conviction: float = Field(ge=0.0, le=1.0)
 
 
+class DebateCase(BaseModel):
+    """A9 / A10. One side of the argument for a single symbol."""
+
+    symbol: str
+    side: Literal["BULL", "BEAR"]
+    claims: list[str] = Field(default_factory=list, max_length=4)
+    strongest_point: str
+    rebuttal: str = Field(
+        default="", description="Response to the other side. Empty in round 1."
+    )
+    conceded: str = Field(
+        default="",
+        description="The strongest point against this side that the advocate accepts.",
+    )
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class Debate(BaseModel):
+    symbol: str
+    bull: DebateCase
+    bear: DebateCase
+    rounds: int = 1
+
+
+class Disagreement(BaseModel):
+    """How far apart the desk was on one symbol. Drives the dashboard heatmap.
+
+    Scored rather than eyeballed because 'the agents disagreed' is the single most
+    interesting thing a multi-agent system produces, and it is invisible unless you
+    measure it.
+    """
+
+    symbol: str
+    technical_signed: float  # +conviction for BUY, -conviction for SELL, 0 for HOLD
+    news_sentiment: float
+    risk_multiplier: float
+    pm_action: Action
+    pm_conviction: float
+    overrode_count: int = 0
+    score: float = Field(ge=0.0, le=1.0)
+
+
 # --------------------------------------------------------------------------------------
 # Agent envelope
 # --------------------------------------------------------------------------------------
@@ -301,6 +343,7 @@ class SymbolOpinions(BaseModel):
     technical: TechnicalOutput
     news: NewsOutput
     risk: RiskAnalystOutput
+    debate: Debate | None = None
 
 
 class BarDecision(BaseModel):
@@ -313,6 +356,7 @@ class BarDecision(BaseModel):
     opinions: list[SymbolOpinions] = Field(default_factory=list)
     proposal: TradeProposal | None = None
     results: list[AgentResult[Any]] = Field(default_factory=list)
+    disagreements: list[Disagreement] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------------------
@@ -355,6 +399,33 @@ class AssetSpec(BaseModel):
     min_trade_increment: float = 0.0
     price_increment: float = 0.01
     tradable: bool = True
+
+
+class SessionState(BaseModel):
+    """Mutable risk state that must survive a restart.
+
+    The kill-switch in particular: if a crash reset the drawdown counter, a bad day
+    could halt, restart, and cheerfully resume losing money. So this is persisted to
+    the journal on every bar and reloaded at startup.
+
+    Equity is deliberately NOT cached here. A stale copy is how you get a kill-switch
+    reading the wrong number; callers pass live equity to ``risk.session.drawdown_from``.
+    """
+
+    trading_day: date
+    day_open_equity: float
+    day_peak_equity: float
+    bar_index: int = 0
+    halted: bool = False
+    halt_reason: str = ""
+    # symbol -> the bar_index at which this symbol becomes tradeable again
+    cooldown_until: dict[str, int] = Field(default_factory=dict)
+
+    def cooling_down(self, symbol: str) -> bool:
+        return self.cooldown_until.get(symbol, -1) > self.bar_index
+
+    def bars_remaining(self, symbol: str) -> int:
+        return max(0, self.cooldown_until.get(symbol, -1) - self.bar_index)
 
 
 class RiskDecision(BaseModel):

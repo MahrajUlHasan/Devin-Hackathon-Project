@@ -17,8 +17,9 @@ Python 3.13 in `.venv`. Editable install: `pip install -e ".[dev]"`.
    lives there. Modules implement against it and do not import each other. If the
    contract looks wrong, stop and raise it rather than editing it in passing.
 
-2. **The risk engine holds 100% branch coverage.** Adding a branch means adding a test.
-   It is the only module with that bar and the only one where a bug costs money.
+2. **The whole `risk/` package holds 100% branch coverage** — `engine.py` and
+   `session.py`. Adding a branch means adding a test. These are the only modules with
+   that bar and the only ones where a bug costs money.
 
 3. **No code path may reach the broker without `risk.evaluate`.** Guarded by
    `test_no_order_is_ever_placed_without_a_risk_ruling`.
@@ -30,6 +31,12 @@ Python 3.13 in `.venv`. Editable install: `pip install -e ".[dev]"`.
    timeout means the desk stops trading mid-demo. It degrades to a quant, not a corpse.
 
 6. **Paper only.** `Settings.assert_paper_only()` raises if `ALPACA_PAPER=false`.
+
+7. **Session controls gate entries, never exits.** The kill-switch and cooldowns both
+   check `action is Action.BUY` first. Blocking an exit is not a risk control.
+
+8. **Session state is persisted every bar.** If a crash could reset the drawdown
+   counter, a halted day could restart and resume losing money.
 
 ## Venue facts that are easy to forget
 
@@ -54,6 +61,15 @@ Python 3.13 in `.venv`. Editable install: `pip install -e ".[dev]"`.
 - The `anthropic` SDK supports native structured output:
   `client.messages.parse(output_format=PydanticModel)` → `resp.parsed_output`. It merges
   with `output_config={"effort": "high"}` for A8.
+- **Never use `hash()` for anything that must reproduce across runs.** Python randomises
+  string hashing per process, so a "deterministic" offline score silently differs every
+  launch. Use `zlib.crc32` (see `_stable_pseudo_score`).
+- **Stubs must not be degenerate.** The offline headline scorer originally returned 0.0
+  for everything, which meant no agent could disagree with another and the disagreement
+  heatmap was permanently blank in `--demo-safe` — the exact mode the demo runs in. A
+  stub has to be representative, not merely valid.
+- The drawdown check must run *before* the decision each bar, and `advance_bar` *after*,
+  or cooldowns expire one bar early.
 
 ## Adding an agent
 

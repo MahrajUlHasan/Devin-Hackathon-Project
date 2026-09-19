@@ -20,11 +20,13 @@ from typing import Any
 from budapilot.contracts import (
     AgentResult,
     BarDecision,
+    Disagreement,
     ExitReason,
     Lesson,
     Order,
     ProtectedPosition,
     RiskDecision,
+    SessionState,
     utcnow,
 )
 
@@ -77,6 +79,18 @@ CREATE TABLE IF NOT EXISTS equity_curve (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT, equity REAL, cash REAL, exposure_pct REAL
 );
+CREATE TABLE IF NOT EXISTS disagreements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT, bar_id TEXT, symbol TEXT, technical_signed REAL, news_sentiment REAL,
+    risk_multiplier REAL, pm_action TEXT, pm_conviction REAL, overrode_count INTEGER,
+    score REAL
+);
+-- Single-row table. The kill-switch must not be resettable by a crash.
+CREATE TABLE IF NOT EXISTS session_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state_json TEXT, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_disagreements_bar ON disagreements(bar_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_bar ON agent_runs(bar_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON agent_runs(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_risk_ts ON risk_decisions(ts DESC);
@@ -144,6 +158,8 @@ class Journal:
     def log_decision(self, decision: BarDecision) -> None:
         for result in decision.results:
             self.log_agent_run(result, decision.bar_id)
+        if decision.disagreements:
+            self.log_disagreements(decision.disagreements, decision.bar_id)
         if decision.proposal:
             p = decision.proposal
             self._write(
@@ -161,6 +177,45 @@ class Journal:
                     json.dumps(p.overrode),
                 ),
             )
+
+    def log_disagreements(self, items: list[Disagreement], bar_id: str) -> None:
+        for d in items:
+            self._write(
+                "INSERT INTO disagreements (ts, bar_id, symbol, technical_signed, "
+                "news_sentiment, risk_multiplier, pm_action, pm_conviction, "
+                "overrode_count, score) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    _iso(),
+                    bar_id,
+                    d.symbol,
+                    d.technical_signed,
+                    d.news_sentiment,
+                    d.risk_multiplier,
+                    d.pm_action.value,
+                    d.pm_conviction,
+                    d.overrode_count,
+                    d.score,
+                ),
+            )
+
+    # -- session state (kill-switch and cooldowns must survive a crash) ----------------
+
+    def save_session(self, state: SessionState) -> None:
+        self._write(
+            "INSERT INTO session_state (id, state_json, updated_at) VALUES (1,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json, "
+            "updated_at=excluded.updated_at",
+            (state.model_dump_json(), _iso()),
+        )
+
+    def load_session(self) -> SessionState | None:
+        rows = self.query("SELECT state_json FROM session_state WHERE id = 1")
+        if not rows:
+            return None
+        try:
+            return SessionState.model_validate_json(rows[0]["state_json"])
+        except Exception:  # noqa: BLE001 -- a corrupt row must not block startup
+            return None
 
     def log_risk(self, decision: RiskDecision, bar_id: str) -> None:
         self._write(
@@ -310,6 +365,16 @@ class Journal:
     def equity_series(self, limit: int = 300) -> list[dict[str, Any]]:
         rows = self.query("SELECT * FROM equity_curve ORDER BY id DESC LIMIT ?", (limit,))
         return list(reversed(rows))
+
+    def disagreement_grid(self, bars: int = 24) -> list[dict[str, Any]]:
+        """Recent disagreement scores, oldest first, for the dashboard heatmap."""
+        rows = self.query(
+            "SELECT * FROM disagreements WHERE bar_id IN "
+            "(SELECT DISTINCT bar_id FROM disagreements ORDER BY id DESC LIMIT ?) "
+            "ORDER BY id",
+            (bars,),
+        )
+        return rows
 
     def degradation_count(self) -> int:
         rows = self.query("SELECT COUNT(*) AS n FROM degradations")

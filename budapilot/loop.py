@@ -15,7 +15,12 @@ from datetime import datetime
 
 from budapilot.agents.bus import AgentBus
 from budapilot.agents.reflection import ReflectionContext
-from budapilot.config import BAR_MINUTES, LESSON_INJECT_K, WATCHLIST
+from budapilot.config import (
+    BAR_MINUTES,
+    HALT_FLATTENS_POSITIONS,
+    LESSON_INJECT_K,
+    WATCHLIST,
+)
 from budapilot.contracts import (
     Action,
     BrokerPort,
@@ -24,6 +29,7 @@ from budapilot.contracts import (
     NewsItem,
     NewsRisk,
     ProtectedPosition,
+    SessionState,
     utcnow,
 )
 from budapilot.execution.engine import ExecutionEngine
@@ -31,6 +37,7 @@ from budapilot.execution.stops import StopManager
 from budapilot.features.indicators import bars_to_frame, compute_features, realized_vol_percentile
 from budapilot.journal.store import Journal
 from budapilot.risk import engine as risk
+from budapilot.risk import session as session_rules
 
 log = logging.getLogger("budapilot.loop")
 
@@ -59,6 +66,7 @@ class TradingLoop:
         self.bar_count = 0
         self.running = False
         self.last_decision = None
+        self.session: SessionState | None = None
         # Entry context kept so the reflection agent can review the actual reasoning.
         self._entry_context: dict[str, dict] = {}
 
@@ -70,6 +78,21 @@ class TradingLoop:
             await self.stops.reconcile(self.journal.load_protected())
         except Exception as exc:  # noqa: BLE001
             log.warning("Reconciliation failed (continuing without it): %s", exc)
+
+        # Restore the kill-switch and cooldowns. If a crash reset these, a halted day
+        # could restart and cheerfully resume losing money.
+        portfolio = await self.broker.get_portfolio()
+        self.session = self.journal.load_session()
+        if self.session is None:
+            self.session = session_rules.new_session(portfolio.equity)
+            log.info("New session, opening equity $%s.", f"{portfolio.equity:,.0f}")
+        else:
+            self.session = session_rules.roll_day(self.session, portfolio.equity)
+            if self.session.halted:
+                log.warning("Restored a HALTED session: %s", self.session.halt_reason)
+            if self.session.cooldown_until:
+                log.info("Restored cooldowns: %s", self.session.cooldown_until)
+        self.journal.save_session(self.session)
 
     # -- one bar -------------------------------------------------------------------------
 
@@ -84,6 +107,19 @@ class TradingLoop:
 
         portfolio = await self.broker.get_portfolio()
         self.journal.log_equity(portfolio.equity, portfolio.cash, portfolio.exposure_pct)
+
+        # Session bookkeeping before any decision: roll the day, update the peak, and
+        # trip the kill-switch if the drawdown limit has been breached.
+        if self.session is None:
+            self.session = session_rules.new_session(portfolio.equity)
+        self.session = session_rules.roll_day(self.session, portfolio.equity)
+        was_halted = self.session.halted
+        self.session = session_rules.observe_equity(self.session, portfolio.equity)
+        if self.session.halted and not was_halted:
+            log.error("KILL-SWITCH TRIPPED. %s", self.session.halt_reason)
+            if HALT_FLATTENS_POSITIONS:
+                await self._flatten_all()
+        self.journal.save_session(self.session)
 
         decision = await self.bus.run_bar(
             bar_id=bar_id,
@@ -112,7 +148,14 @@ class TradingLoop:
         asset = await self.feed.get_asset(proposal.symbol)
 
         # THE VETO. Nothing reaches the broker without passing here.
-        verdict = risk.evaluate(proposal, feature, portfolio, asset, news_risk=news_risk)
+        verdict = risk.evaluate(
+            proposal,
+            feature,
+            portfolio,
+            asset,
+            news_risk=news_risk,
+            session=self.session,
+        )
         self.journal.log_risk(verdict, bar_id)
 
         if not verdict.approved:
@@ -188,6 +231,18 @@ class TradingLoop:
             return 50.0
         return realized_vol_percentile(bars_to_frame(btc)["close"])
 
+    async def _flatten_all(self) -> None:
+        """Close every open position. Only used when HALT_FLATTENS_POSITIONS is set.
+
+        Off by default: selling into whatever caused the drawdown means taking the
+        worst available price at the worst possible moment, and the open positions
+        already carry stops sized before the trouble started.
+        """
+        for symbol in list(self.stops.positions):
+            price = await self.feed.latest_price(symbol)
+            if price > 0:
+                await self.stops.close_manually(symbol, price)
+
     # -- exits ---------------------------------------------------------------------------
 
     async def _on_exit(
@@ -196,6 +251,17 @@ class TradingLoop:
         """A position closed. Journal it, then let A7 write the lesson."""
         outcome_pct = (fill / pos.entry - 1.0) * 100 if pos.entry else 0.0
         log.info("%s exited via %s at %.4f (%+.2f%%)", pos.symbol, reason.value, fill, outcome_pct)
+
+        # Cool the symbol off before anything else, so a re-entry cannot slip in while
+        # the reflection agent is still thinking.
+        if self.session is not None:
+            self.session = session_rules.start_cooldown(self.session, pos.symbol, reason)
+            self.journal.save_session(self.session)
+            log.info(
+                "%s cooling down for %d bars.",
+                pos.symbol,
+                self.session.bars_remaining(pos.symbol),
+            )
 
         ctx = self._entry_context.pop(pos.symbol, None)
         if ctx is None or ctx.get("proposal") is None:
@@ -229,6 +295,10 @@ class TradingLoop:
                     await self.run_once()
                 except Exception:  # noqa: BLE001 -- one bad bar must not end the session
                     log.exception("Bar failed; continuing.")
+
+                if self.session is not None:
+                    self.session = session_rules.advance_bar(self.session)
+                    self.journal.save_session(self.session)
 
                 if max_bars and self.bar_count >= max_bars:
                     break

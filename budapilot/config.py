@@ -43,6 +43,8 @@ MODELS: dict[str, str] = {
     "pm": MODEL_OPUS,  # A6 the one call that becomes an order
     "reflection": MODEL_SONNET,  # A7 off the hot path
     "deep": MODEL_OPUS,  # A8 human-triggered showpiece, effort=high
+    "bull": MODEL_SONNET,  # A9 advocacy needs reasoning, not just labelling
+    "bear": MODEL_SONNET,  # A10 ditto -- a weak bear case is worthless
 }
 
 # Per-agent timeouts (seconds). On expiry the agent degrades rather than raising.
@@ -56,6 +58,8 @@ TIMEOUTS: dict[str, float] = {
     "pm": 15.0,  # then DeterministicArbiter, not a stub
     "reflection": 20.0,
     "deep": 120.0,
+    "bull": 12.0,
+    "bear": 12.0,
 }
 
 # --------------------------------------------------------------------------------------
@@ -81,6 +85,28 @@ MIN_CONVICTION = 0.60
 # Reject positions too small to matter. Without this the engine happily spends the last
 # few dollars of cap headroom on a $6 order that pays fees and moves no needle.
 MIN_ORDER_NOTIONAL_PCT = 0.005  # 0.5% of equity
+
+# --- Daily drawdown kill-switch ---
+# Measured from the session's peak equity, not its opening equity: a desk that is up 8%
+# and gives back 5% has lost control of the day just as much as one that started flat.
+MAX_DAILY_DRAWDOWN_PCT = 0.05
+# A halt stops NEW ENTRIES only. Open positions keep their stops and take-profits,
+# because force-liquidating into whatever caused the drawdown is usually how a bad day
+# becomes a catastrophic one. Set true to flatten instead.
+HALT_FLATTENS_POSITIONS = False
+
+# --- Per-symbol cooldown ---
+# Bars to wait after closing a position before re-entering the same symbol. Stops the
+# desk from immediately re-buying what just stopped it out.
+COOLDOWN_BARS = 6  # 30 minutes at 5-minute bars
+# A take-profit is not evidence the thesis was wrong, so it cools down for less time.
+COOLDOWN_BARS_AFTER_TAKE = 2
+
+# --- Bull/Bear debate (A9/A10) ---
+# Off by default: it roughly doubles tokens and latency per candidate. Worth it when
+# you want to watch the argument; not worth it in the hot path by default.
+ENABLE_DEBATE = False
+DEBATE_ROUNDS = 1  # 1 = opening statements only, 2 = adds a rebuttal round
 
 # --------------------------------------------------------------------------------------
 # Environment

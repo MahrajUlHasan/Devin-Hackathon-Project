@@ -11,6 +11,7 @@ earns it.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -58,6 +59,17 @@ class ScoredHeadlineList(BaseModel):
     scores: list[ScoredHeadline] = []
 
 
+def _stable_pseudo_score(headline: str) -> float:
+    """A repeatable [-1, 1] score for offline use.
+
+    Deliberately not ``hash()``: Python randomises string hashing per process, so that
+    would give a different "deterministic" answer on every run and quietly destroy the
+    reproducibility that --demo-safe is supposed to guarantee.
+    """
+    digest = zlib.crc32(headline.encode("utf-8"))
+    return round(((digest % 2001) - 1000) / 1000.0, 3)
+
+
 @dataclass
 class NewsContext:
     symbol: str
@@ -75,9 +87,21 @@ class HeadlineScorer(Agent[ScoredHeadlineList]):
         return f"Asset: {ctx.symbol}\n\nHeadlines:\n{news_block(ctx.items, limit=20)}"
 
     def stub(self, ctx: NewsContext) -> ScoredHeadlineList:
+        """Deterministic pseudo-scores derived from the headline text.
+
+        Returning 0.0 for everything would be more "honest", but it makes the offline
+        system degenerate: neutral sentiment everywhere means no agent can ever
+        disagree with another, the disagreement heatmap is uniformly blank, and
+        --demo-safe stops being representative of what the real desk does. These
+        scores are stable for a given headline, so runs remain reproducible.
+        """
         return ScoredHeadlineList(
             scores=[
-                ScoredHeadline(headline=n.headline, score=0.0, reason="not scored (offline)")
+                ScoredHeadline(
+                    headline=n.headline,
+                    score=_stable_pseudo_score(n.headline),
+                    reason="deterministic offline pseudo-score, not real analysis",
+                )
                 for n in ctx.items[:20]
             ]
         )
@@ -123,10 +147,19 @@ class NewsAgent(Agent[NewsOutput]):
         return "\n".join(lines)
 
     def stub(self, ctx: NewsContext) -> NewsOutput:
+        sentiment = time_decayed_sentiment(ctx.items, ctx.scored)
+        # Strongly negative aggregate flow reads as elevated risk. Never CRITICAL:
+        # that is a hard veto on real money and no offline heuristic has earned it.
+        if sentiment <= -0.6:
+            risk = NewsRisk.HIGH
+        elif sentiment <= -0.25:
+            risk = NewsRisk.MEDIUM
+        else:
+            risk = NewsRisk.LOW
         return NewsOutput(
             symbol=ctx.symbol,
-            sentiment=time_decayed_sentiment(ctx.items, ctx.scored),
-            news_risk=NewsRisk.LOW,
+            sentiment=sentiment,
+            news_risk=risk,
             catalysts=[],
             cited=ctx.scored[:3],
             rationale="Deterministic time-decayed aggregate (no model).",

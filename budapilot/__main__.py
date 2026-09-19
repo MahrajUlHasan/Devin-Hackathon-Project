@@ -19,7 +19,13 @@ import uvicorn
 
 from budapilot.agents.base import AgentRuntime
 from budapilot.agents.bus import AgentBus
-from budapilot.config import BAR_MINUTES, WATCHLIST, settings
+from budapilot.config import (
+    BAR_MINUTES,
+    DEBATE_ROUNDS,
+    ENABLE_DEBATE,
+    WATCHLIST,
+    settings,
+)
 from budapilot.journal.store import Journal
 from budapilot.loop import TradingLoop
 from budapilot.web.app import create_app
@@ -67,10 +73,14 @@ def build(args: argparse.Namespace) -> tuple[TradingLoop, Journal]:
     elif not settings.has_anthropic:
         log.warning("No ANTHROPIC_API_KEY; agents will fall back to stubs.")
 
+    debate = args.debate or ENABLE_DEBATE
+    if debate:
+        log.info("Bull/Bear debate enabled (%d round(s)).", DEBATE_ROUNDS)
+
     loop = TradingLoop(
         feed=feed,
         broker=broker,
-        bus=AgentBus(runtime),
+        bus=AgentBus(runtime, enable_debate=debate),
         journal=journal,
         interval_s=args.interval if args.interval is not None else BAR_MINUTES * 60,
     )
@@ -123,6 +133,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--stub-agents", action="store_true", help="Real data, deterministic agents."
+    )
+    parser.add_argument(
+        "--debate",
+        action="store_true",
+        help="Run the A9/A10 bull-vs-bear round before the PM. Roughly doubles tokens "
+        "and latency per candidate.",
     )
     parser.add_argument("--cash", type=float, default=100_000.0)
     parser.add_argument(

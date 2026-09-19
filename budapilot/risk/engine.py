@@ -35,6 +35,7 @@ from budapilot.contracts import (
     NewsRisk,
     PortfolioState,
     RiskDecision,
+    SessionState,
     TradeProposal,
 )
 
@@ -68,6 +69,7 @@ def evaluate(
     asset: AssetSpec,
     *,
     news_risk: NewsRisk = NewsRisk.LOW,
+    session: SessionState | None = None,
 ) -> RiskDecision:
     """Rule on one proposal. Returns an approval with a sized order, or a rejection."""
     checks: dict[str, bool] = {}
@@ -80,6 +82,31 @@ def evaluate(
             checks["actionable"] = False
             return _reject(symbol, action, "Proposal is HOLD; nothing to execute.", checks)
         checks["actionable"] = True
+
+        # -- Session-level controls ----------------------------------------------------
+        # Both gate entries only. An exit must always be allowed through: refusing to
+        # let the desk out of a position is not a risk control, it is a trap.
+        if session is not None and action is Action.BUY:
+            if session.halted:
+                checks["not_halted"] = False
+                return _reject(
+                    symbol,
+                    action,
+                    f"Session halted. {session.halt_reason}",
+                    checks,
+                )
+            checks["not_halted"] = True
+
+            if session.cooling_down(symbol):
+                checks["cooldown"] = False
+                return _reject(
+                    symbol,
+                    action,
+                    f"{symbol} is in cooldown for another "
+                    f"{session.bars_remaining(symbol)} bar(s) after its last exit.",
+                    checks,
+                )
+            checks["cooldown"] = True
 
         if not asset.tradable:
             checks["tradable"] = False

@@ -21,9 +21,7 @@
   .card h2 { font-size:12px; margin:0 0 8px; text-transform:uppercase;
              letter-spacing:.8px; color:var(--dim); }
   .stat { font-size:22px; font-weight:600; }
-  .agents { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
-  @media (max-width:1400px){ .agents { grid-template-columns:repeat(3,1fr);} }
-  @media (max-width:800px){ .agents { grid-template-columns:1fr;} }
+  .agents { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
   .agent { background:var(--panel); border:1px solid var(--line); border-radius:8px;
            padding:10px; display:flex; flex-direction:column; gap:8px; min-height:150px; }
   .agent > .head { display:flex; justify-content:space-between; align-items:center; gap:6px; }
@@ -62,6 +60,22 @@
   #deep { white-space:pre-wrap; font-size:12.5px; line-height:1.6; }
   .muted { color:var(--dim); }
   svg { display:block; width:100%; height:60px; }
+  .halt { background:#3d1418; border:1px solid var(--red); border-radius:8px;
+          padding:10px 14px; color:#ffb3ae; display:none; }
+  .halt.on { display:block; }
+  .halt b { color:var(--red); letter-spacing:1px; }
+  .cool { color:var(--amber); font-size:11px; }
+  .heat { border-collapse:separate; border-spacing:2px; }
+  .heat td.cell { width:15px; height:15px; padding:0; border:none; border-radius:2px;
+                  background:#1b2027; }
+  .heat td.sym { font-size:10px; color:var(--dim); padding-right:6px; border:none;
+                 white-space:nowrap; }
+  .bullbear { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:6px; }
+  .bcase { border:1px solid var(--line); border-radius:6px; padding:6px; font-size:11px; }
+  .bcase.bull { border-color:#1d4d2b; } .bcase.bear { border-color:#5c1f1c; }
+  .bcase h4 { margin:0 0 4px; font-size:10px; letter-spacing:.6px; }
+  .bcase ul { margin:3px 0 0 14px; padding:0; }
+  .conceded { color:var(--amber); margin-top:4px; font-style:italic; }
 </style>
 </head>
 <body>
@@ -73,6 +87,8 @@
 </header>
 
 <div class="wrap">
+  <div class="halt" id="halt"></div>
+
   <div class="row">
     <div class="card"><h2>Equity</h2><div class="stat" id="equity">—</div>
       <svg id="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg></div>
@@ -81,6 +97,18 @@
       <div class="sub" id="exposurecap"></div></div>
     <div class="card"><h2>Open positions</h2><div class="stat" id="openpos">—</div>
       <div class="sub" id="opencap"></div></div>
+    <div class="card"><h2>Daily drawdown</h2><div class="stat" id="drawdown">—</div>
+      <div class="sub" id="ddlimit"></div>
+      <div class="cool" id="cooldowns"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Disagreement heatmap — how far apart the desk was, per bar</h2>
+    <table class="heat"><tbody id="heat"></tbody></table>
+    <div class="sub" style="margin-top:6px">
+      Darker amber = the specialists disagreed more. Built from technical direction vs
+      news sentiment, how hard the risk analyst cut size, and whether the PM overrode anyone.
+    </div>
   </div>
 
   <div>
@@ -156,6 +184,15 @@ function renderAgentCard(group) {
               <div class="kv"><span>vol pct</span><span>${F(o.realized_vol_pct,0)}</span></div>
               <div class="kv"><span>btc drift</span><span>${F((o.btc_dominance_drift||0)*100)}%</span></div>
               <div class="rationale">${esc(o.rationale)}</div>`;
+    } else if (group.key === "bull" || group.key === "bear") {
+      const cls = group.key;
+      body = `<div class="bcase ${cls}">
+          <div class="kv"><span>confidence</span><span>${F(o.confidence)}</span></div>
+          <div class="rationale">${esc(o.strongest_point)}</div>
+          <ul>${(o.claims||[]).map(c=>`<li>${esc(c)}</li>`).join("")}</ul>
+          ${o.rebuttal?`<div class="rationale">↩ ${esc(o.rebuttal)}</div>`:""}
+          ${o.conceded?`<div class="conceded">concedes: ${esc(o.conceded)}</div>`:""}
+        </div>`;
     } else if (group.key === "pm") {
       body = `<div class="kv"><span>${esc(o.symbol)}</span>
                 <span class="${actClass(o.action)}" style="font-size:16px;font-weight:700">${esc(o.action)}</span></div>
@@ -190,6 +227,54 @@ function spark(series) {
   return `<polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/>`;
 }
 
+function heatColour(score) {
+  if (score === null || score === undefined) return "#1b2027";
+  // Grey -> amber. Disagreement is interesting, not bad, so it is not red.
+  const a = Math.min(Math.max(score, 0), 1);
+  return `rgba(210,153,34,${0.12 + a * 0.88})`;
+}
+
+function renderHeatmap(h) {
+  const el = document.getElementById("heat");
+  if (!h || !h.symbols.length) {
+    el.innerHTML = `<tr><td class="muted">no decisions recorded yet</td></tr>`;
+    return;
+  }
+  el.innerHTML = h.symbols.map((sym, i) => {
+    const cells = h.rows[i].map(c => {
+      const t = c ? `${sym} — disagreement ${F(c.score)}, tech ${F(c.technical_signed)}, `
+                    + `news ${F(c.news_sentiment)}, size ${F(c.risk_multiplier)}×`
+                    + (c.overrode_count ? `, PM overrode ${c.overrode_count}` : "")
+                  : `${sym} — not a candidate this bar`;
+      return `<td class="cell" style="background:${heatColour(c ? c.score : null)}" title="${esc(t)}"></td>`;
+    }).join("");
+    return `<tr><td class="sym">${esc(sym)}</td>${cells}</tr>`;
+  }).join("");
+}
+
+function renderSession(s) {
+  const banner = document.getElementById("halt");
+  if (s && s.halted) {
+    banner.className = "halt on";
+    banner.innerHTML = `<b>TRADING HALTED</b> — ${esc(s.halt_reason)}`;
+  } else {
+    banner.className = "halt";
+  }
+
+  const dd = document.getElementById("drawdown");
+  if (s && s.drawdown_pct !== undefined) {
+    dd.textContent = F(s.drawdown_pct * 100, 2) + "%";
+    dd.className = "stat " + (s.halted ? "sell" : s.drawdown_pct > s.max_drawdown_pct * 0.6 ? "" : "buy");
+    document.getElementById("ddlimit").textContent =
+      `limit ${F(s.max_drawdown_pct * 100, 0)}% · peak $${F(s.day_peak_equity, 0)}`;
+  } else { dd.textContent = "—"; }
+
+  const cd = Object.entries((s && s.cooldown_until) || {});
+  document.getElementById("cooldowns").textContent = cd.length
+    ? "cooling: " + cd.map(([k, v]) => `${k} (${Math.max(0, v - s.bar_index)}b)`).join(", ")
+    : "";
+}
+
 function render(d) {
   const eq = d.equity.length ? d.equity[d.equity.length-1] : null;
   document.getElementById("equity").textContent  = eq ? money(eq.equity) : "—";
@@ -205,6 +290,8 @@ function render(d) {
   document.getElementById("degraded").className  = "sub " + (d.degradations ? "fallback" : "ok");
 
   document.getElementById("agents").innerHTML = d.panel.map(renderAgentCard).join("");
+  renderHeatmap(d.heatmap);
+  renderSession(d.session);
 
   document.getElementById("risks").innerHTML = d.risks.map(r => `<tr>
     <td>${esc(r.symbol)}</td><td class="${actClass(r.action)}">${esc(r.action)}</td>

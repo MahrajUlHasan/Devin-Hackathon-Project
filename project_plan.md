@@ -3,9 +3,10 @@
 A crypto-only multi-agent trading desk: eight specialist Claude agents feeding a
 deterministic risk engine and a real Alpaca paper broker.
 
-**Status: built.** 143 tests passing, 100% branch coverage on the risk engine, ruff
-clean, `--demo-safe` verified with network calls monkeypatched to raise. See `README.md`
-for how to run it and `AGENTS.md` for how to work on it.
+**Status: built, including all stretch items.** 201 tests passing, 100% branch coverage
+across the `risk/` package, ruff clean, `--demo-safe` verified with network calls
+monkeypatched to raise. See `README.md` for how to run it and `AGENTS.md` for how to
+work on it.
 
 ---
 
@@ -61,6 +62,8 @@ trade the venue rejects with a 422.
 | A6 | Portfolio Manager | `claude-opus-5` | every bar | the `TradeProposal` + who it overrode |
 | A7 | Reflection | `claude-sonnet-5` | on close | a lesson, injected into A6's next prompt |
 | A8 | Deep Analysis | `claude-opus-5`, effort `high` | on demand | long-form thesis |
+| A9 | Bull advocate | `claude-sonnet-5` | per candidate, `--debate` | the case for entering |
+| A10 | Bear advocate | `claude-sonnet-5` | per candidate, `--debate` | the case against |
 
 Haiku does high-volume near-mechanical work; Sonnet does per-symbol reasoning in the hot
 path; **Opus is spent in exactly one place — the call that becomes an order.**
@@ -182,7 +185,36 @@ python -m budapilot --demo-safe              # runs with sockets patched to rais
    prompt. The system learns inside the demo.
 6. **Deep analysis.** Opus at high effort, full written thesis.
 
-## Stretch, not built
+## Stretch items — now built
 
-Bull/Bear debate round before the PM. Daily drawdown kill-switch. Per-symbol cooldown.
-Agent-disagreement heatmap.
+All four shipped. See `README.md` for behaviour and `tests/test_session.py` /
+`tests/test_debate.py` for the guarantees.
+
+**Daily drawdown kill-switch.** Measured from the session peak rather than the open, so
+a morning profit cannot quietly fund an afternoon of losses. Halts new entries but does
+not flatten — selling into whatever caused the drawdown takes the worst price at the
+worst moment, and the open positions already carry stops sized before the trouble
+started. Sticky until the UTC day rolls, because an oscillating kill-switch is worse
+than none. Persisted every bar so a crash cannot reset the loss limit.
+
+**Per-symbol cooldown.** Asymmetric: 6 bars after a stop-out, 2 after a take-profit.
+Hitting your target is not evidence the thesis was wrong. Neither this nor the halt can
+ever block an exit.
+
+**Bull/Bear debate (A9/A10, `--debate`).** Two `claude-sonnet-5` advocates argue one
+symbol before the PM rules. Round 1 is independent — letting the bear read the bull
+first turns adversarial review into one argument plus a reaction. Both must fill
+`conceded`, and the PM is told they are advocates rather than neutral analysts. Off by
+default; it roughly doubles tokens and latency per candidate.
+
+**Disagreement heatmap.** Three axes — technical vs news, how hard risk cut size,
+whether the PM overrode anyone — as a symbols × bars grid.
+
+### One more thing the build found
+
+**A degenerate stub makes a feature look broken.** With the offline headline scorer
+returning 0.0 for every headline, sentiment was always neutral, so no agent could
+disagree with any other and the heatmap was uniformly blank — in `--demo-safe`, the
+exact mode the demo runs in. The scorer now derives a stable pseudo-score from
+`zlib.crc32` of the headline. Not `hash()`: Python randomises string hashing per
+process, which would have made a "deterministic" offline mode differ on every launch.

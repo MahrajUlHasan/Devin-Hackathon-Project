@@ -36,4 +36,4 @@ EXPOSE 8000
 
 # Paper-only by construction: --live means "real orders to the PAPER account".
 # --max-minutes bounds each run; the dashboard's Start button begins the next one.
-CMD ["python", "-m", "budapilot", "--live", "--interval", "300", "--max-minutes", "20"]
+CMD ["python", "-m", "budapilot", "--live", "--interval", "20", "--max-minutes", "20"]

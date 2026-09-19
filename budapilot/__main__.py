@@ -137,6 +137,16 @@ async def serve(args: argparse.Namespace) -> None:
         log.info("Time budget: %.0f minutes.", max_minutes)
 
     print(f"\n  BudaPilot dashboard  ->  http://{args.host}:{args.port}\n")
+    if os.getenv("PORT") and args.host.startswith("127."):
+        # A platform injected PORT, so it will route traffic to this container -- and
+        # a loopback bind means every request 502s. Nearly always a BUDAPILOT_HOST
+        # copied from a local .env into the host's variables.
+        log.error(
+            "PORT is set (hosted) but the dashboard is bound to %s. The platform cannot "
+            "reach loopback; remove BUDAPILOT_HOST from the host's variables or set it "
+            "to 0.0.0.0.",
+            args.host,
+        )
 
     trading: asyncio.Task | None = None
 

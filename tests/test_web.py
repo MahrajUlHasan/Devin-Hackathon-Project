@@ -306,4 +306,4 @@ async def test_index_renders(journal):
     async with _client(app) as c:
         r = await c.get("/")
     assert r.status_code == 200
-    assert "BUDAPILOT" in r.text and "/api/market" in r.text
+    assert "GOLDFISH" in r.text and "/api/market" in r.text

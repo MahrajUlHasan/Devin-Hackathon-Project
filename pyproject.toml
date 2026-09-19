@@ -1,7 +1,7 @@
 [project]
 name = "budapilot"
 version = "0.1.0"
-description = "Multi-agent crypto trading system: specialist LLM agents (Claude or Gemini), deterministic risk veto, Alpaca paper broker."
+description = "Goldfish: multi-agent crypto trading desk. Specialist LLM agents (Claude, Gemini fallback) propose; a deterministic risk engine holds the veto; Alpaca paper executes."
 requires-python = ">=3.11"
 dependencies = [
     "alpaca-py>=0.33.0",

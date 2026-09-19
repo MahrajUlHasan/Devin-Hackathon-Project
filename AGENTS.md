@@ -1,4 +1,7 @@
-# Working on BudaPilot
+# Working on Goldfish
+
+The project is named Goldfish (after Michael Reeves' stock-picking goldfish, Frederick);
+the Python package is still `budapilot`. Do not rename the package — the diff is noise.
 
 ## Commands
 

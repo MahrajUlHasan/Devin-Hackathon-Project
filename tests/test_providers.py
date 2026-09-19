@@ -376,6 +376,128 @@ async def test_a_gemini_failure_degrades_the_agent_like_any_other():
 
 
 # ======================================================================================
+# Cross-vendor fallback: a failed Claude call is answered by Gemini, not by the stub
+# ======================================================================================
+
+
+class _Recorder:
+    """A provider that either answers or raises, and remembers what it was asked."""
+
+    name = "fake"
+
+    def __init__(self, *, answer=None, raise_=None):
+        self.calls: list[str] = []
+        self._answer, self._raise = answer, raise_
+
+    async def complete(self, *, model, **_):
+        self.calls.append(model)
+        if self._raise:
+            raise self._raise
+        return self._answer, (1, 1)
+
+    async def aclose(self):
+        return None
+
+
+def _runtime_with_fallback(primary: _Recorder, fallback: _Recorder | None) -> AgentRuntime:
+    rt = AgentRuntime(provider="anthropic", api_key="sk-fake")
+    rt._provider = primary  # type: ignore[assignment]
+    if fallback is not None:
+        rt.fallback_name = "gemini"
+        rt.fallback_models = models_for("gemini")
+        rt._fallback = fallback  # type: ignore[assignment]
+    return rt
+
+
+def _technical_ctx():
+    from budapilot.agents.technical import TechnicalContext
+    from tests.test_agents import bundle  # type: ignore[import-not-found]
+
+    return TechnicalContext(features=bundle("BTC/USD"))
+
+
+def _technical_answer():
+    from budapilot.contracts import Action
+
+    return TechnicalOutput(
+        symbol="BTC/USD", direction=Action.BUY, conviction=0.8, horizon_bars=6, rationale="up"
+    )
+
+
+async def test_primary_failure_is_served_by_the_fallback_vendor():
+    from budapilot.agents.technical import TechnicalAgent
+
+    primary = _Recorder(raise_=RuntimeError("429 rate limited"))
+    fallback = _Recorder(answer=_technical_answer())
+    result = await TechnicalAgent(_runtime_with_fallback(primary, fallback)).run(_technical_ctx())
+
+    assert result.status is AgentStatus.OK
+    assert result.error is None  # a real opinion was produced; this is not a degradation
+    assert result.model.startswith("gemini-")  # the card names the model that answered
+    assert primary.calls == [models_for("anthropic")["technical"]]
+    assert fallback.calls == [models_for("gemini")["technical"]]
+
+
+async def test_fallback_is_not_consulted_when_the_primary_succeeds():
+    from budapilot.agents.technical import TechnicalAgent
+
+    primary = _Recorder(answer=_technical_answer())
+    fallback = _Recorder(answer=_technical_answer())
+    result = await TechnicalAgent(_runtime_with_fallback(primary, fallback)).run(_technical_ctx())
+
+    assert result.status is AgentStatus.OK
+    assert result.model.startswith("claude-")
+    assert fallback.calls == []
+
+
+async def test_both_vendors_failing_degrades_with_both_errors_recorded():
+    from budapilot.agents.technical import TechnicalAgent
+
+    primary = _Recorder(raise_=RuntimeError("claude down"))
+    fallback = _Recorder(raise_=ValueError("gemini down"))
+    result = await TechnicalAgent(_runtime_with_fallback(primary, fallback)).run(_technical_ctx())
+
+    assert result.status is AgentStatus.DEGRADED
+    assert "claude down" in result.error and "gemini down" in result.error
+    assert isinstance(result.output, TechnicalOutput)
+
+
+async def test_no_fallback_configured_degrades_immediately():
+    from budapilot.agents.technical import TechnicalAgent
+
+    primary = _Recorder(raise_=RuntimeError("claude down"))
+    result = await TechnicalAgent(_runtime_with_fallback(primary, None)).run(_technical_ctx())
+
+    assert result.status is AgentStatus.DEGRADED
+    assert "fallback" not in (result.error or "")
+
+
+def test_auto_fallback_picks_the_other_vendor_only_when_it_has_a_key(monkeypatch):
+    import budapilot.agents.base as base
+
+    both = _settings(monkeypatch, ANTHROPIC_API_KEY="sk-a", GEMINI_API_KEY="g-1")
+    monkeypatch.setattr(base, "settings", both)
+    rt = AgentRuntime(provider="anthropic", fallback="auto")
+    assert rt.fallback_name == "gemini"
+    assert rt.fallback_models["pm"].startswith("gemini-")
+
+    only_claude = _settings(monkeypatch, ANTHROPIC_API_KEY="sk-a")
+    monkeypatch.setattr(base, "settings", only_claude)
+    rt = AgentRuntime(provider="anthropic", fallback="auto")
+    assert rt.fallback_name is None and rt.fallback is None
+
+
+def test_fallback_is_off_unless_asked_for(monkeypatch):
+    import budapilot.agents.base as base
+
+    both = _settings(monkeypatch, ANTHROPIC_API_KEY="sk-a", GEMINI_API_KEY="g-1")
+    monkeypatch.setattr(base, "settings", both)
+    assert AgentRuntime(provider="anthropic").fallback is None
+    # Asking for the primary as its own fallback is a no-op, not a second client.
+    assert AgentRuntime(provider="anthropic", fallback="anthropic").fallback is None
+
+
+# ======================================================================================
 # Live: does Gemini actually honour our real contract schemas?
 # ======================================================================================
 

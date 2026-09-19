@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from budapilot.agents.bus import AgentBus
 from budapilot.agents.reflection import ReflectionContext
@@ -65,7 +65,11 @@ class TradingLoop:
 
         self.bar_count = 0
         self.running = False
+        self.paused = False
+        self.deadline: datetime | None = None
         self.last_decision = None
+        self.last_bar_at: datetime | None = None
+        self._frames: dict[str, list] = {}
         self.session: SessionState | None = None
         # Entry context kept so the reflection agent can review the actual reasoning.
         self._entry_context: dict[str, dict] = {}
@@ -98,7 +102,8 @@ class TradingLoop:
 
     async def run_once(self) -> None:
         self.bar_count += 1
-        bar_id = f"{utcnow():%Y%m%dT%H%M%S}-{self.bar_count:05d}"
+        self.last_bar_at = utcnow()
+        bar_id = f"{self.last_bar_at:%Y%m%dT%H%M%S}-{self.bar_count:05d}"
 
         features, news = await self._gather(bar_id)
         if not features:
@@ -201,7 +206,7 @@ class TradingLoop:
 
         features: list[FeatureBundle] = []
         news: dict[str, list[NewsItem]] = {}
-        self._frames = {}
+        frames: dict[str, list] = {}
 
         for symbol, bars, items in zip(self.symbols, bar_lists, news_lists, strict=True):
             if isinstance(bars, Exception) or not bars:
@@ -209,24 +214,24 @@ class TradingLoop:
                 log.warning("No bars for %s (%s)", symbol, why)
                 continue
             features.append(compute_features(symbol, bars))
-            self._frames[symbol] = bars
+            frames[symbol] = bars
             news[symbol] = [] if isinstance(items, Exception) else items
 
             # Keep the simulated broker marked to the latest price.
             if hasattr(self.broker, "set_price"):
                 self.broker.set_price(symbol, bars[-1].close)
 
+        # Swap atomically so the dashboard never reads a half-built map mid-gather.
+        self._frames = frames
+
         # Feed the software stops on every bar close. In live trading this is also
         # driven by the trade websocket at a much higher rate.
-        for symbol in list(self.stops.positions):
-            price = await self.feed.latest_price(symbol)
-            if price > 0:
-                await self.stops.on_price(symbol, price)
+        await self._tick_stops()
 
         return features, news
 
     def _realized_vol(self, features: list[FeatureBundle]) -> float:
-        btc = getattr(self, "_frames", {}).get("BTC/USD")
+        btc = self._frames.get("BTC/USD")
         if not btc:
             return 50.0
         return realized_vol_percentile(bars_to_frame(btc)["close"])
@@ -285,31 +290,70 @@ class TradingLoop:
 
     # -- driver ---------------------------------------------------------------------------
 
-    async def run_forever(self, max_bars: int | None = None) -> None:
+    async def run_forever(
+        self, max_bars: int | None = None, max_minutes: float | None = None
+    ) -> None:
+        """Drive the desk until stopped, out of bars, or out of time.
+
+        ``max_minutes`` is a wall-clock budget. A hosted demo that nobody remembers to
+        stop is a paper account trading on its own for a week; the budget makes the
+        default outcome "it stopped", not "it kept going".
+        """
         self.running = True
+        self.deadline = (
+            utcnow() + timedelta(minutes=max_minutes) if max_minutes else None
+        )
+        # Budgets are per run, not per process: a relaunch after the budget is spent
+        # gets the full allowance again, while bar_count keeps counting for the journal.
+        first_bar = self.bar_count
         await self.startup()
         try:
             while self.running:
+                if self.deadline is not None and utcnow() >= self.deadline:
+                    log.info("Time budget of %.1f min spent; stopping.", max_minutes)
+                    break
+
                 started = datetime.now()
-                try:
-                    await self.run_once()
-                except Exception:  # noqa: BLE001 -- one bad bar must not end the session
-                    log.exception("Bar failed; continuing.")
+                if self.paused:
+                    # Paused means no new decisions, not no protection. Software stops
+                    # still watch prices; the broker-side stop_limit never stopped.
+                    await self._tick_stops()
+                else:
+                    try:
+                        await self.run_once()
+                    except Exception:  # noqa: BLE001 -- one bad bar must not end the session
+                        log.exception("Bar failed; continuing.")
 
-                if self.session is not None:
-                    self.session = session_rules.advance_bar(self.session)
-                    self.journal.save_session(self.session)
+                    if self.session is not None:
+                        self.session = session_rules.advance_bar(self.session)
+                        self.journal.save_session(self.session)
 
-                if max_bars and self.bar_count >= max_bars:
-                    break
-                if hasattr(self.feed, "advance") and not self.feed.advance():
-                    log.info("Fixture replay exhausted after %d bars.", self.bar_count)
-                    break
+                    if max_bars and self.bar_count - first_bar >= max_bars:
+                        break
+                    if hasattr(self.feed, "advance") and not self.feed.advance():
+                        log.info("Fixture replay exhausted after %d bars.", self.bar_count)
+                        break
 
                 elapsed = (datetime.now() - started).total_seconds()
                 await asyncio.sleep(max(self.interval_s - elapsed, 0))
         finally:
             self.running = False
+
+    async def _tick_stops(self) -> None:
+        """Feed every protected position its latest price."""
+        for symbol in list(self.stops.positions):
+            price = await self.feed.latest_price(symbol)
+            if price > 0:
+                await self.stops.on_price(symbol, price)
+
+    def pause(self) -> None:
+        """Stop making decisions. Exits keep running; see ``run_forever``."""
+        self.paused = True
+        log.info("Loop paused: no new bars will be decided until resumed.")
+
+    def resume(self) -> None:
+        self.paused = False
+        log.info("Loop resumed.")
 
     def stop(self) -> None:
         self.running = False

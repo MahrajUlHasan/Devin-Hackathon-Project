@@ -22,6 +22,25 @@ WATCHLIST: list[str] = [
     "DOGE/USD",
 ]
 
+# Everything the user may add to the watchlist from the dashboard. All are Alpaca US
+# crypto pairs; the default WATCHLIST above is the subset traded when nobody picks.
+UNIVERSE: list[str] = [
+    "BTC/USD",
+    "ETH/USD",
+    "SOL/USD",
+    "LTC/USD",
+    "AVAX/USD",
+    "DOGE/USD",
+    "LINK/USD",
+    "DOT/USD",
+    "UNI/USD",
+    "AAVE/USD",
+    "BCH/USD",
+    "XRP/USD",
+    "SHIB/USD",
+    "PEPE/USD",
+]
+
 BAR_MINUTES = 5
 MAX_CANDIDATES = 3
 
@@ -63,9 +82,9 @@ PROVIDER_MODELS: dict[str, dict[str, str]] = {
         # Rolling aliases rather than pinned versions: a hackathon demo that breaks
         # because a dated snapshot was retired is a bad trade for reproducibility we
         # are not otherwise relying on. Override per tier via env if you need a pin.
-        FAST: os.getenv("GEMINI_MODEL_FAST", "gemini-flash-lite-latest"),
-        MID: os.getenv("GEMINI_MODEL_MID", "gemini-flash-latest"),
-        DEEP: os.getenv("GEMINI_MODEL_DEEP", "gemini-pro-latest"),
+        FAST: os.getenv("GEMINI_MODEL_FAST", "gemini-3.6-flash"),
+        MID: os.getenv("GEMINI_MODEL_MID", "gemini-3.7-flash"),
+        DEEP: os.getenv("GEMINI_MODEL_DEEP", "gemini-3.8-flash"),
     },
 }
 
@@ -161,8 +180,20 @@ class Settings:
     )
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "auto").lower())
     db_path: str = field(default_factory=lambda: os.getenv("BUDAPILOT_DB", "budapilot.db"))
-    host: str = field(default_factory=lambda: os.getenv("BUDAPILOT_HOST", "127.0.0.1"))
-    port: int = field(default_factory=lambda: int(os.getenv("BUDAPILOT_PORT", "8000")))
+    # Hosts (Railway, Fly, Render...) inject PORT and route only to it, so it wins over
+    # a BUDAPILOT_PORT left in .env. Locally, with no PORT, we stay on loopback so the
+    # paper desk is not on the LAN by accident.
+    host: str = field(
+        default_factory=lambda: os.getenv(
+            "BUDAPILOT_HOST", "0.0.0.0" if os.getenv("PORT") else "127.0.0.1"
+        )
+    )
+    port: int = field(
+        default_factory=lambda: int(os.getenv("PORT") or os.getenv("BUDAPILOT_PORT") or "8000")
+    )
+    # If set, POST routes on the dashboard (pause/resume, watchlist, deep analysis)
+    # require it. A public URL to a paper account still deserves a lock on the buttons.
+    dashboard_token: str = field(default_factory=lambda: os.getenv("BUDAPILOT_DASHBOARD_TOKEN", ""))
 
     @property
     def has_alpaca(self) -> bool:

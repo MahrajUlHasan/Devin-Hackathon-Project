@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 
 import uvicorn
@@ -32,6 +33,10 @@ from budapilot.loop import TradingLoop
 from budapilot.web.app import create_app
 
 log = logging.getLogger("budapilot")
+
+# A --live run with no explicit budget stops after this long. Long enough for a demo
+# and a coffee; short enough that a forgotten deploy is not a week of paper trades.
+DEFAULT_LIVE_MINUTES = 120
 
 
 def build(args: argparse.Namespace) -> tuple[TradingLoop, Journal]:
@@ -69,7 +74,9 @@ def build(args: argparse.Namespace) -> tuple[TradingLoop, Journal]:
 
     # --- agents -------------------------------------------------------------------
     runtime = AgentRuntime(
-        offline=args.demo_safe or args.stub_agents, provider=args.provider
+        offline=args.demo_safe or args.stub_agents,
+        provider=args.provider,
+        fallback=None if args.no_fallback else "auto",
     )
     if runtime.offline:
         reason = (
@@ -86,6 +93,14 @@ def build(args: argparse.Namespace) -> tuple[TradingLoop, Journal]:
     else:
         tiers = sorted(set(runtime.models.values()))
         log.info("LLM provider: %s  |  models: %s", runtime.provider_name, ", ".join(tiers))
+        if runtime.fallback_name:
+            log.info(
+                "Fallback provider: %s  |  models: %s",
+                runtime.fallback_name,
+                ", ".join(sorted(set(runtime.fallback_models.values()))),
+            )
+        else:
+            log.info("No fallback provider (only one vendor key configured).")
 
     debate = args.debate or ENABLE_DEBATE
     if debate:
@@ -110,12 +125,41 @@ async def serve(args: argparse.Namespace) -> None:
     )
     server = uvicorn.Server(config)
 
+    max_minutes = args.max_minutes
+    if args.live and max_minutes is None:
+        max_minutes = DEFAULT_LIVE_MINUTES
+        log.warning(
+            "--live without --max-minutes: stopping after %d min. Pass --max-minutes 0 "
+            "to run until interrupted.",
+            max_minutes,
+        )
+    if max_minutes:
+        log.info("Time budget: %.0f minutes.", max_minutes)
+
     print(f"\n  BudaPilot dashboard  ->  http://{args.host}:{args.port}\n")
-    trading = asyncio.create_task(loop.run_forever(max_bars=args.max_bars))
+
+    trading: asyncio.Task | None = None
+
+    def launch() -> asyncio.Task:
+        """Start (or restart) the trading loop with the same bar and time budget."""
+        nonlocal trading
+        trading = asyncio.create_task(
+            loop.run_forever(max_bars=args.max_bars, max_minutes=max_minutes or None)
+        )
+        return trading
+
+    launch()
+    # The dashboard's Start button can bring a finished loop back with a fresh budget.
+    app.state.relaunch = launch
     serving = asyncio.create_task(server.serve())
 
     try:
-        await asyncio.wait({trading, serving}, return_when=asyncio.FIRST_COMPLETED)
+        if args.serve_after_done:
+            # Hosted: the URL must stay alive after the budget is spent so the results
+            # remain visible. Only a SIGTERM/Ctrl+C ends the process.
+            await serving
+        else:
+            await asyncio.wait({trading, serving}, return_when=asyncio.FIRST_COMPLETED)
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
@@ -127,8 +171,10 @@ async def serve(args: argparse.Namespace) -> None:
             await asyncio.wait_for(serving, timeout=3)
         except (TimeoutError, asyncio.CancelledError):
             serving.cancel()
-        trading.cancel()
-        await asyncio.gather(trading, serving, return_exceptions=True)
+        if trading is not None:
+            trading.cancel()
+            await asyncio.gather(trading, return_exceptions=True)
+        await asyncio.gather(serving, return_exceptions=True)
         journal.close()
         print("Stopped cleanly.")
 
@@ -152,8 +198,14 @@ def main() -> None:
         "--provider",
         choices=sorted(PROVIDER_MODELS),
         default=None,
-        help="Which LLM vendor runs the agents. Default: LLM_PROVIDER from .env, or "
-        "whichever API key is present.",
+        help="Which LLM vendor runs the agents. Default: LLM_PROVIDER from .env, else "
+        "Claude when ANTHROPIC_API_KEY is set, else whichever key is present.",
+    )
+    parser.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Do not retry a failed agent call on the other vendor. By default a "
+        "Claude failure is retried once on Gemini (and vice versa) before stubbing.",
     )
     parser.add_argument(
         "--debate",
@@ -166,6 +218,21 @@ def main() -> None:
         "--interval", type=float, default=None, help="Seconds between bars (default 300)."
     )
     parser.add_argument("--max-bars", type=int, default=None)
+    parser.add_argument(
+        "--max-minutes",
+        type=float,
+        default=None,
+        help=f"Stop the loop after this many minutes of wall-clock time. Defaults to "
+        f"{DEFAULT_LIVE_MINUTES} with --live so a hosted demo cannot run unattended "
+        "forever; 0 disables the budget.",
+    )
+    parser.add_argument(
+        "--serve-after-done",
+        action="store_true",
+        default=os.getenv("BUDAPILOT_SERVE_AFTER_DONE", "").lower() in ("1", "true", "yes"),
+        help="Keep the dashboard up after the loop's bar/time budget is spent instead of "
+        "exiting. For hosting. Also enabled by BUDAPILOT_SERVE_AFTER_DONE=true.",
+    )
     parser.add_argument("--db", default=settings.db_path)
     parser.add_argument("--host", default=settings.host)
     parser.add_argument("--port", type=int, default=settings.port)

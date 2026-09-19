@@ -7,7 +7,11 @@
 .venv/Scripts/python.exe -m pytest --cov=budapilot.risk --cov-branch --cov-report=term-missing
 .venv/Scripts/python.exe -m ruff check . --fix
 .venv/Scripts/python.exe -m budapilot --demo-safe --interval 3 --max-bars 40 --port 8080
+.venv/Scripts/python.exe -m budapilot --live --interval 60 --port 8080 --db budapilot-paper.db  # real data, Claude agents, Alpaca PAPER orders
 ```
+
+Run `pytest -k "not honours_every_real_contract"` unless you want the 9 live Gemini
+tests to spend quota; they are skipped automatically without a Gemini key.
 
 Python 3.13 in `.venv`. Editable install: `pip install -e ".[dev]"`.
 
@@ -70,6 +74,61 @@ Python 3.13 in `.venv`. Editable install: `pip install -e ".[dev]"`.
   stub has to be representative, not merely valid.
 - The drawdown check must run *before* the decision each bar, and `advance_bar` *after*,
   or cooldowns expire one bar early.
+- **Gemini's `-latest` aliases are not stable.** `gemini-flash-latest` / `gemini-pro-latest`
+  returned 400/404 for a new key; the API's own error named `gemini-3.6-flash`. Pin to a
+  model that `client.models.list()` actually returns for *your* key. The free tier is
+  5 requests/min/model, which one bar of this desk exceeds — Gemini is a fallback, not
+  a primary, unless billing is on.
+- **Provider fallback is per call, inside `Agent.run`.** Primary fails or times out →
+  one attempt on `runtime.fallback` with that vendor's model for the same tier → stub.
+  Tests override `_call(ctx)`; the fallback goes through `_call_with(ctx, provider,
+  model)` so those tests stay meaningful. `AgentRuntime(fallback=...)` is off unless
+  asked for, so unit tests never build a second client from a real key in `.env`.
+- **The dashboard is session-scoped.** `web/app.py` records `started_at` and every
+  panel query filters `ts >= started_at`. Without this, a cached agent that skips a bar
+  falls back to "last 3 rows for that agent" and shows a stale 429 from a previous
+  process against a different vendor — which is exactly what was mistaken for "Google
+  errors on a Claude run". Bull/Bear are omitted (not shown empty) when `--debate` is
+  off.
+
+## Dashboard API
+
+- `GET /api/snapshot` — everything the page renders; `GET /stream` pushes it over SSE.
+- `GET /api/market` — spot price per watched symbol (`feed.latest_price`, 4s cache) plus
+  sparkline/high/low/features from the bars the loop already fetched (`loop._frames`).
+- `GET /api/suggest` — the whole `UNIVERSE` ranked by the scout's deterministic
+  `trend_score` on fresh 5m bars (60s cache), with a one-line `why`.
+- `POST /api/watchlist {"symbols": [...]}` — validated against `UNIVERSE`, 1–8 symbols,
+  sets `loop.symbols` for the next bar.
+- `POST /api/loop/stop` / `POST /api/loop/start` — pause/resume decisions. **Paused is
+  not dead**: `run_forever` still calls `_tick_stops()` every interval, so software
+  stops fire and the broker-side stop_limit is untouched. `start` returns 409 once the
+  loop has finished (bar or time budget) — that needs a process restart.
+- None of these routes reach the broker or the risk engine.
+
+## Time budget
+
+`--max-minutes N` ends `run_forever` after N minutes of wall clock. `--live` without it
+defaults to 120 (`DEFAULT_LIVE_MINUTES`); `--max-minutes 0` disables. Budgets are
+per *run*: the dashboard's Start button relaunches a finished loop with the full
+allowance (`app.state.relaunch`, set in `serve`). By default the process exits when the
+loop finishes; `--serve-after-done` / `BUDAPILOT_SERVE_AFTER_DONE=true` keeps the
+dashboard up instead, which is what hosting needs.
+
+## Hosting
+
+- `Dockerfile` + `railway.json` at the root. Python 3.13-slim, one process, `CMD` runs
+  `--live --interval 300 --max-minutes 120`. Override the start command on the host to
+  change flags.
+- The platform's `PORT` wins over `BUDAPILOT_PORT` and flips the bind to `0.0.0.0`
+  (`config.Settings`). Locally, with no `PORT`, it stays on loopback.
+- SQLite must live on a **volume** (`BUDAPILOT_DB=/data/budapilot.db`, volume mounted at
+  `/data`) or the kill-switch state and audit trail reset on every deploy — Rule 8.
+- `BUDAPILOT_DASHBOARD_TOKEN` gates every POST (`X-Dashboard-Token` header, constant-time
+  compare). Reads stay public. A public URL to a paper account with an unlocked pause
+  button and an Opus-on-demand endpoint is a bill, not a demo.
+- Not Vercel: serverless functions cap execution time and have no persistent disk. This
+  is a long-running process with SSE and a background loop; it wants a container host.
 
 ## Adding an agent
 

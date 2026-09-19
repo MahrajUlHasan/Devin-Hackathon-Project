@@ -2,344 +2,718 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BudaPilot — multi-agent crypto desk</title>
 <style>
   :root {
-    --bg:#0d1117; --panel:#161b22; --line:#272e38; --ink:#e6edf3; --dim:#8b949e;
-    --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; --violet:#bc8cff;
+    --bg:#0a0d12; --bg2:#0f141b; --panel:#131923; --panel2:#182030; --line:#222c3a; --line2:#2c3847;
+    --ink:#e8edf3; --dim:#8a97a8; --faint:#5b6878;
+    --green:#2fd47a; --red:#ff5c5c; --amber:#f2b134; --blue:#5aa9ff; --violet:#b48cff; --cyan:#3fd6d6;
+    --r:12px;
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  header { display:flex; align-items:baseline; gap:16px; padding:12px 20px;
-           border-bottom:1px solid var(--line); background:var(--panel); }
-  h1 { font-size:16px; margin:0; letter-spacing:.5px; }
+  html,body { margin:0; background:radial-gradient(1200px 600px at 20% -10%, #14213a 0%, var(--bg) 55%) fixed; color:var(--ink);
+    font:14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color:var(--blue); }
+  button { background:var(--panel2); color:var(--ink); border:1px solid var(--line2); border-radius:8px;
+           padding:7px 12px; cursor:pointer; font:inherit; font-size:12.5px; transition:.15s; }
+  button:hover { border-color:var(--blue); background:#1c2740; }
+  button.primary { background:linear-gradient(135deg,#2f6fed,#5aa9ff); border-color:transparent; color:#fff; font-weight:600; }
+  button.primary:hover { filter:brightness(1.08); }
+  button.ghost { background:transparent; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+
+  header { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px; padding:10px 22px;
+           background:rgba(10,13,18,.85); backdrop-filter:blur(10px); border-bottom:1px solid var(--line); }
+  .logo { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:1.2px; font-size:15px; }
+  .logo i { width:26px; height:26px; border-radius:8px; display:inline-block;
+            background:conic-gradient(from 200deg,#5aa9ff,#b48cff,#2fd47a,#5aa9ff); }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:3px 9px; border-radius:999px;
+          border:1px solid var(--line2); color:var(--dim); white-space:nowrap; background:rgba(255,255,255,.02); }
+  .chip b { color:var(--ink); font-weight:600; }
+  .chip.ok { border-color:#1f6b41; color:var(--green); }
+  .chip.warn { border-color:#7a5a12; color:var(--amber); }
+  .chip.bad { border-color:#7a2a2a; color:var(--red); }
+  .chip.claude { border-color:#6b4d1a; color:#f2c46b; }
+  .chip.gemini { border-color:#1f4d7a; color:#8cc2ff; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+  .dot.off { background:var(--faint); box-shadow:none; }
+  .spacer { flex:1; }
+  .nextbar { display:flex; flex-direction:column; gap:3px; min-width:160px; font-size:11px; color:var(--dim); }
+  .bar { height:4px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,#5aa9ff,#b48cff); width:0; transition:width .9s linear; }
+
+  .wrap { padding:18px 22px 40px; display:grid; gap:18px; max-width:1800px; margin:0 auto; }
+  .grid { display:grid; gap:12px; }
+  .kpis { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  .card { background:linear-gradient(180deg,var(--panel),var(--bg2)); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px; }
+  .card h2 { font-size:11px; margin:0 0 10px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); font-weight:600;
+             display:flex; align-items:center; gap:8px; }
+  .card h2 .spacer { flex:1; }
+  .stat { font-size:24px; font-weight:700; letter-spacing:-.3px; }
   .sub { color:var(--dim); font-size:12px; }
-  .wrap { padding:16px 20px; display:grid; gap:16px; }
-  .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
-  .card h2 { font-size:12px; margin:0 0 8px; text-transform:uppercase;
-             letter-spacing:.8px; color:var(--dim); }
-  .stat { font-size:22px; font-weight:600; }
-  .agents { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
-  .agent { background:var(--panel); border:1px solid var(--line); border-radius:8px;
-           padding:10px; display:flex; flex-direction:column; gap:8px; min-height:150px; }
-  .agent > .head { display:flex; justify-content:space-between; align-items:center; gap:6px; }
-  .agent .name { font-size:12px; font-weight:600; letter-spacing:.4px; }
-  .badge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line);
-           color:var(--dim); white-space:nowrap; }
-  .badge.haiku { color:var(--blue); border-color:#1f4d7a; }
-  .badge.sonnet { color:var(--violet); border-color:#4c3a73; }
-  .badge.opus { color:var(--amber); border-color:#6b5316; }
-  .out { background:#0b0f14; border:1px solid var(--line); border-radius:6px; padding:8px;
-         font-size:11.5px; }
-  .out .sym { color:var(--dim); font-size:10px; letter-spacing:.5px; }
-  .kv { display:flex; justify-content:space-between; gap:8px; }
-  .kv span:last-child { color:var(--ink); }
-  .kv span:first-child { color:var(--dim); }
-  .rationale { color:#c9d1d9; font-size:12px; line-height:1.55; }
-  .pm { grid-column:1/-1; border-color:#6b5316; }
-  .pm .rationale { font-size:15px; line-height:1.65; color:#f0f6fc; }
-  .over { color:var(--amber); font-size:12px; margin-top:6px; }
-  .over li { margin:2px 0; }
-  .chip { font-size:10px; padding:1px 6px; border-radius:10px; }
-  .ok { color:var(--green); } .degraded { color:var(--dim); }
-  .stub { color:var(--dim); } .fallback { color:var(--amber); }
+  .muted { color:var(--faint); }
+  .pos { color:var(--green); } .neg { color:var(--red); }
   .buy { color:var(--green); } .sell { color:var(--red); } .hold { color:var(--dim); }
-  .LOW{color:var(--green);} .MEDIUM{color:var(--amber);} .HIGH{color:#ff9f45;}
-  .CRITICAL{color:var(--red);font-weight:700;}
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th { text-align:left; color:var(--dim); font-weight:500; font-size:10px;
-       text-transform:uppercase; letter-spacing:.6px; padding:4px 6px; }
-  td { padding:4px 6px; border-top:1px solid var(--line); vertical-align:top; }
-  .rej { color:var(--amber); }
-  .app { color:var(--green); }
-  button { background:#21262d; color:var(--ink); border:1px solid var(--line);
-           border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; }
-  button:hover { border-color:var(--blue); }
-  #deep { white-space:pre-wrap; font-size:12.5px; line-height:1.6; }
-  .muted { color:var(--dim); }
-  svg { display:block; width:100%; height:60px; }
-  .halt { background:#3d1418; border:1px solid var(--red); border-radius:8px;
-          padding:10px 14px; color:#ffb3ae; display:none; }
+  .LOW{color:var(--green);} .MEDIUM{color:var(--amber);} .HIGH{color:#ff9f45;} .CRITICAL{color:var(--red);font-weight:700;}
+  svg { display:block; }
+  .halt { background:#3d1418; border:1px solid var(--red); border-radius:var(--r); padding:12px 16px; color:#ffb3ae; display:none; }
   .halt.on { display:block; }
   .halt b { color:var(--red); letter-spacing:1px; }
-  .cool { color:var(--amber); font-size:11px; }
-  .heat { border-collapse:separate; border-spacing:2px; }
-  .heat td.cell { width:15px; height:15px; padding:0; border:none; border-radius:2px;
-                  background:#1b2027; }
-  .heat td.sym { font-size:10px; color:var(--dim); padding-right:6px; border:none;
-                 white-space:nowrap; }
-  .bullbear { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:6px; }
-  .bcase { border:1px solid var(--line); border-radius:6px; padding:6px; font-size:11px; }
+
+  /* market tape */
+  .tape { grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); }
+  .tile { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:12px 14px 10px;
+          display:flex; flex-direction:column; gap:6px; transition:.15s; }
+  .tile:hover { border-color:var(--line2); transform:translateY(-1px); }
+  .tile.held { border-color:#1f6b41; box-shadow:inset 0 0 0 1px #1f6b41; }
+  .tile.off { opacity:.55; }
+  .tile .top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .tile .sym { font-weight:700; letter-spacing:.3px; }
+  .tile .price { font-size:20px; font-weight:700; letter-spacing:-.4px; }
+  .tile .chg { font-size:12px; font-weight:600; }
+  .tile svg { width:100%; height:38px; }
+  .tile .tags { display:flex; gap:5px; flex-wrap:wrap; }
+  .tag { font-size:10px; padding:1px 6px; border-radius:6px; background:rgba(255,255,255,.04); border:1px solid var(--line); color:var(--dim); }
+  .tag.up { color:var(--green); border-color:#1f6b41; } .tag.dn { color:var(--red); border-color:#7a2a2a; }
+  .toggle { appearance:none; width:34px; height:18px; border-radius:999px; background:var(--line2); position:relative; cursor:pointer; outline:none; transition:.2s; }
+  .toggle:checked { background:#2f6fed; }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:.2s; }
+  .toggle:checked::after { left:18px; }
+  .flash { animation:flash .6s ease-out; }
+  @keyframes flash { from { background:rgba(90,169,255,.18);} to { background:transparent; } }
+
+  /* analytics */
+  .analytics { grid-template-columns:2fr 1fr 1fr; }
+  @media (max-width:1100px){ .analytics { grid-template-columns:1fr; } }
+  .hbar { display:grid; grid-template-columns:130px 1fr 60px; gap:8px; align-items:center; font-size:12px; margin:4px 0; }
+  .hbar .track { height:8px; border-radius:4px; background:var(--line); overflow:hidden; }
+  .hbar .track i { display:block; height:100%; border-radius:4px; }
+  .legend { display:flex; gap:10px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-top:8px; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  .mini { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; font-size:12px; }
+  .mini b { font-size:16px; display:block; }
+  .donut { display:flex; align-items:center; gap:14px; }
+  .donut svg { width:90px; height:90px; flex:none; }
+
+  /* desk */
+  .agents { grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .agent { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+  .agent.pm { grid-column:1/-1; border-color:#6b4d1a; background:linear-gradient(180deg,#1a1710,var(--bg2)); }
+  .agent .head { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .agent .name { font-size:12.5px; font-weight:700; letter-spacing:.3px; }
+  .agent .toggler { cursor:pointer; user-select:none; }
+  .agent .toggler:hover .name { color:var(--blue); }
+  .agent .caret { color:var(--faint); font-size:11px; transition:transform .15s; margin-right:6px; display:inline-block; }
+  .agent.open .caret { transform:rotate(90deg); }
+  .agent .summary { display:flex; flex-wrap:wrap; gap:6px 12px; font-size:12px; color:var(--dim); align-items:baseline; }
+  .agent .summary b { color:var(--ink); }
+  .agent .details { display:none; flex-direction:column; gap:8px; margin-top:4px; }
+  .agent.open .details { display:flex; }
+  .agent.open .summary { display:none; }
+  .deskbar { display:flex; align-items:center; gap:8px; margin:0 0 10px; }
+  .deskbar h2 { margin:0; }
+  .badge { font-size:10px; padding:1px 7px; border-radius:999px; border:1px solid var(--line2); color:var(--dim); white-space:nowrap; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .badge.haiku,.badge.flash-lite { color:var(--blue); border-color:#1f4d7a; }
+  .badge.sonnet,.badge.flash { color:var(--violet); border-color:#4c3a73; }
+  .badge.opus,.badge.pro { color:var(--amber); border-color:#6b5316; }
+  .badge.fb { color:#8cc2ff; border-color:#1f4d7a; background:rgba(90,169,255,.08); }
+  .status { font-size:10.5px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; }
+  .status.ok { color:var(--green);} .status.degraded { color:var(--red);} .status.stub { color:var(--dim);} .status.fallback { color:var(--amber);} .status.cached { color:var(--cyan);} .status.idle { color:var(--faint);}
+  .out { background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:12px; }
+  .out .sym { color:var(--dim); font-size:10.5px; letter-spacing:.5px; font-weight:600; margin-bottom:3px; }
+  .kv { display:flex; justify-content:space-between; gap:8px; }
+  .kv span:first-child { color:var(--dim); }
+  .rationale { color:#c9d1d9; font-size:12px; line-height:1.55; margin-top:4px; }
+  .pm .rationale { font-size:14.5px; line-height:1.65; color:#f0f6fc; }
+  .over { color:var(--amber); font-size:12px; margin-top:6px; }
+  .over li { margin:2px 0; }
+  .err { color:var(--red); font-size:10.5px; margin-top:5px; word-break:break-word; }
+  .bcase { border:1px solid var(--line); border-radius:8px; padding:8px; font-size:11.5px; }
   .bcase.bull { border-color:#1d4d2b; } .bcase.bear { border-color:#5c1f1c; }
-  .bcase h4 { margin:0 0 4px; font-size:10px; letter-spacing:.6px; }
   .bcase ul { margin:3px 0 0 14px; padding:0; }
   .conceded { color:var(--amber); margin-top:4px; font-style:italic; }
+
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--dim); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; padding:6px 8px; }
+  td { padding:7px 8px; border-top:1px solid var(--line); vertical-align:top; }
+  .rej { color:var(--amber); } .app { color:var(--green); }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+  .tabs button { background:transparent; border:none; border-bottom:2px solid transparent; border-radius:0; color:var(--dim); padding:8px 12px; }
+  .tabs button.on { color:var(--ink); border-bottom-color:var(--blue); }
+  .tab { display:none; } .tab.on { display:block; }
+
+  .heat { border-collapse:separate; border-spacing:3px; }
+  .heat td.cell { width:16px; height:16px; padding:0; border:none; border-radius:3px; background:#1b2027; }
+  .heat td.sym { font-size:10.5px; color:var(--dim); padding-right:8px; border:none; white-space:nowrap; }
+
+  #deep { white-space:pre-wrap; font-size:13px; line-height:1.65; }
+  .toast { position:fixed; right:20px; bottom:20px; background:var(--panel2); border:1px solid var(--line2); border-radius:10px;
+           padding:10px 14px; font-size:12.5px; box-shadow:0 10px 30px rgba(0,0,0,.4); opacity:0; transform:translateY(8px); transition:.25s; z-index:50; }
+  .toast.on { opacity:1; transform:none; }
+
+  /* drawer */
+  .drawer { position:fixed; top:0; right:-560px; width:540px; max-width:95vw; height:100vh; background:var(--bg2); border-left:1px solid var(--line2);
+            z-index:40; transition:right .25s; display:flex; flex-direction:column; box-shadow:-20px 0 60px rgba(0,0,0,.5); }
+  .drawer.on { right:0; }
+  .drawer .dh { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line); }
+  .drawer .db { padding:14px 18px; overflow:auto; flex:1; }
+  .drawer .df { padding:12px 18px; border-top:1px solid var(--line); display:flex; gap:8px; justify-content:flex-end; }
+  .srow { display:grid; grid-template-columns:22px 92px 1fr 70px; gap:10px; align-items:center; padding:9px 8px; border-radius:8px; border:1px solid transparent; }
+  .srow:hover { background:rgba(255,255,255,.03); }
+  .srow.rec { border-color:#1f6b41; background:rgba(47,212,122,.06); }
+  .srow .rank { color:var(--faint); font-size:11px; }
+  .srow .why { font-size:11.5px; color:var(--dim); }
+  .srow .score { text-align:right; font-weight:700; }
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:30; display:none; }
+  .scrim.on { display:block; }
 </style>
 </head>
 <body>
 <header>
-  <h1>BUDAPILOT</h1>
-  <span class="sub">multi-agent crypto desk · paper money only</span>
-  <span class="sub" id="barinfo"></span>
-  <span class="sub" style="margin-left:auto" id="degraded"></span>
+  <div class="logo"><i></i>BUDAPILOT</div>
+  <span class="chip" id="providerchip"><span class="dot"></span><b>—</b></span>
+  <span class="chip" id="brokerchip">—</span>
+  <span class="chip" id="barchip">bar #0</span>
+  <span class="chip" id="degradedchip">—</span>
+  <span class="chip" id="budgetchip" style="display:none"></span>
+  <div class="spacer"></div>
+  <div class="nextbar"><span id="nextbar">next bar —</span><div class="bar"><i id="nextbarfill"></i></div></div>
+  <button id="loopbtn" onclick="toggleLoop()" title="Pause or resume decisions. Stops and exits keep running.">⏸ Stop loop</button>
 </header>
 
 <div class="wrap">
   <div class="halt" id="halt"></div>
 
-  <div class="row">
+  <!-- KPIs -->
+  <div class="grid kpis">
     <div class="card"><h2>Equity</h2><div class="stat" id="equity">—</div>
-      <svg id="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg></div>
-    <div class="card"><h2>Cash</h2><div class="stat" id="cash">—</div></div>
+      <div class="sub" id="pnl"></div>
+      <svg id="spark" viewBox="0 0 300 54" preserveAspectRatio="none" style="width:100%;height:54px;margin-top:6px"></svg></div>
+    <div class="card"><h2>Cash</h2><div class="stat" id="cash">—</div><div class="sub" id="cashsub"></div></div>
     <div class="card"><h2>Exposure</h2><div class="stat" id="exposure">—</div>
+      <div class="bar" style="margin:8px 0 4px"><i id="expfill" style="background:linear-gradient(90deg,#2fd47a,#f2b134)"></i></div>
       <div class="sub" id="exposurecap"></div></div>
-    <div class="card"><h2>Open positions</h2><div class="stat" id="openpos">—</div>
-      <div class="sub" id="opencap"></div></div>
+    <div class="card"><h2>Open positions</h2><div class="stat" id="openpos">—</div><div class="sub" id="opencap"></div></div>
     <div class="card"><h2>Daily drawdown</h2><div class="stat" id="drawdown">—</div>
-      <div class="sub" id="ddlimit"></div>
-      <div class="cool" id="cooldowns"></div></div>
+      <div class="bar" style="margin:8px 0 4px"><i id="ddfill" style="background:linear-gradient(90deg,#f2b134,#ff5c5c)"></i></div>
+      <div class="sub" id="ddlimit"></div><div class="sub" id="cooldowns" style="color:var(--amber)"></div></div>
+    <div class="card"><h2>Risk engine</h2><div class="stat" id="approval">—</div><div class="sub" id="approvalsub"></div></div>
   </div>
 
+  <!-- Market tape + watchlist -->
   <div class="card">
-    <h2>Disagreement heatmap — how far apart the desk was, per bar</h2>
-    <table class="heat"><tbody id="heat"></tbody></table>
-    <div class="sub" style="margin-top:6px">
-      Darker amber = the specialists disagreed more. Built from technical direction vs
-      news sentiment, how hard the risk analyst cut size, and whether the PM overrode anyone.
-    </div>
+    <h2>Live market <span class="sub" id="marketts"></span>
+      <span class="spacer"></span>
+      <span class="sub" id="wlcount"></span>
+      <button class="ghost" onclick="openSuggest()">✦ Suggest best</button>
+      <button class="primary" id="applywl" onclick="applyWatchlist()" disabled>Apply watchlist</button>
+    </h2>
+    <div class="grid tape" id="tape"><div class="muted">loading prices…</div></div>
+    <div class="sub" style="margin-top:8px">Toggle a symbol to add or remove it from the desk's watchlist. Changes take effect on the next bar; open positions keep their stops regardless.</div>
   </div>
 
+  <!-- Analytics -->
+  <div class="grid analytics">
+    <div class="card"><h2>Agent performance <span class="sub">this session · avg latency, status mix</span></h2><div id="agentperf"></div>
+      <div class="legend"><span><i style="background:var(--green)"></i>ok</span><span><i style="background:var(--amber)"></i>fallback</span><span><i style="background:var(--red)"></i>degraded</span><span><i style="background:var(--faint)"></i>stub</span></div></div>
+    <div class="card"><h2>PM decisions</h2><div class="donut"><svg id="donut" viewBox="0 0 36 36"></svg><div id="donutlegend" class="sub"></div></div>
+      <div id="rejectreasons" class="sub" style="margin-top:10px"></div></div>
+    <div class="card"><h2>Trades</h2><div class="mini" id="tradestats"></div><div class="sub" id="tokens" style="margin-top:10px"></div></div>
+  </div>
+
+  <!-- Desk -->
   <div>
-    <h2 style="font-size:12px;color:var(--dim);letter-spacing:.8px;margin:0 0 8px">
-      THE DESK — latest bar <span id="barid" class="muted"></span></h2>
-    <div class="agents" id="agents"></div>
+    <div class="deskbar">
+      <h2 style="font-size:11px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;font-weight:600">
+        The desk — latest bar <span id="barid" class="muted mono"></span></h2>
+      <span id="debatechip" class="chip" style="display:none">debate on</span>
+      <span class="spacer"></span>
+      <button class="ghost" onclick="setAllAgents(true)">Expand all</button>
+      <button class="ghost" onclick="setAllAgents(false)">Collapse all</button>
+    </div>
+    <div class="grid agents" id="agents"></div>
   </div>
 
-  <div class="row" style="grid-template-columns:1fr 1fr">
-    <div class="card">
-      <h2>Risk engine — deterministic, holds the veto</h2>
-      <table><thead><tr><th>Symbol</th><th>Action</th><th>Verdict</th><th>Reason</th></tr>
-      </thead><tbody id="risks"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Orders</h2>
-      <table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Status</th><th>Fill</th></tr>
-      </thead><tbody id="orders"></tbody></table>
-    </div>
-  </div>
-
-  <div class="row" style="grid-template-columns:1fr 1fr">
-    <div class="card">
-      <h2>Protected positions — software stop + resting stop_limit</h2>
-      <table><thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Take</th>
-      <th>Backstop</th></tr></thead><tbody id="positions"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Lessons (A7) — injected into the PM's next prompt</h2>
-      <tbody id="lessons" style="display:block"></tbody>
-    </div>
-  </div>
-
+  <!-- Heatmap -->
   <div class="card">
-    <h2>Deep analysis — A8, claude-opus-5 at high effort</h2>
+    <h2>Disagreement heatmap <span class="sub">how far apart the desk was, per bar</span></h2>
+    <table class="heat"><tbody id="heat"></tbody></table>
+    <div class="sub" style="margin-top:8px">Darker amber = more disagreement. Built from technical direction vs news sentiment, how hard the risk analyst cut size, and whether the PM overrode anyone.</div>
+  </div>
+
+  <!-- Tables -->
+  <div class="card">
+    <div class="tabs">
+      <button class="on" data-tab="risks">Risk rulings</button>
+      <button data-tab="orders">Orders</button>
+      <button data-tab="positions">Protected positions</button>
+      <button data-tab="lessons">Lessons (A7)</button>
+      <button data-tab="proposals">Proposals</button>
+    </div>
+    <div class="tab on" id="tab-risks"><table><thead><tr><th>Symbol</th><th>Action</th><th>Verdict</th><th>Qty</th><th>Notional</th><th>Reason</th></tr></thead><tbody id="risks"></tbody></table></div>
+    <div class="tab" id="tab-orders"><table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Status</th><th>Fill</th><th>Intent</th></tr></thead><tbody id="orders"></tbody></table></div>
+    <div class="tab" id="tab-positions"><table><thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Take</th><th>Backstop</th></tr></thead><tbody id="positions"></tbody></table></div>
+    <div class="tab" id="tab-lessons"><div id="lessons"></div></div>
+    <div class="tab" id="tab-proposals"><table><thead><tr><th>Bar</th><th>Symbol</th><th>Action</th><th>Conv.</th><th>Size</th><th>Rationale</th></tr></thead><tbody id="proposals"></tbody></table></div>
+  </div>
+
+  <!-- Deep -->
+  <div class="card">
+    <h2>Deep analysis <span class="sub" id="deepmodel">A8 · on demand, high effort</span></h2>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="deepbtns"></div>
     <div id="deep" class="muted">Pick a symbol for a full written thesis. Out of the hot path.</div>
   </div>
 </div>
 
+<!-- Suggestion drawer -->
+<div class="scrim" id="scrim" onclick="closeSuggest()"></div>
+<div class="drawer" id="drawer">
+  <div class="dh"><b>Best options right now</b><span class="sub" id="suggestts"></span><span class="spacer"></span><button class="ghost" onclick="closeSuggest()">✕</button></div>
+  <div class="db">
+    <div class="sub" style="margin-bottom:10px">The whole universe ranked by the same deterministic trend score the Scout uses, on live 5-minute bars. Recommended = the top candidates with a positive score. Click a row to toggle it in your watchlist.</div>
+    <div id="suggestlist" class="muted">ranking…</div>
+  </div>
+  <div class="df"><button onclick="useRecommended()">Use recommended</button><button class="primary" onclick="applyWatchlist(); closeSuggest();">Apply watchlist</button></div>
+</div>
+<div class="toast" id="toast"></div>
+
 <script>
 const F = (n, d=2) => (n===null||n===undefined||isNaN(n)) ? "—" : Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 const money = n => "$" + F(n);
-const esc = s => String(s??"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const modelClass = m => m && m.includes("opus") ? "opus" : m && m.includes("sonnet") ? "sonnet" : m && m.includes("haiku") ? "haiku" : "";
+const px = n => n===null||n===undefined ? "—" : n >= 1000 ? F(n,2) : n >= 1 ? F(n,3) : F(n,6);
+const esc = s => String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const modelClass = m => !m ? "" : /opus/.test(m)?"opus":/sonnet/.test(m)?"sonnet":/haiku/.test(m)?"haiku":/pro/.test(m)?"pro":/lite/.test(m)?"flash-lite":/flash/.test(m)?"flash":"";
+const vendor = m => !m ? "" : /^claude/.test(m) ? "claude" : /^gemini|^gemma/.test(m) ? "gemini" : "";
 const actClass = a => ({BUY:"buy",SELL:"sell",HOLD:"hold"})[a] || "";
+const signed = (n, d=2) => n===null||n===undefined ? "—" : (n>=0?"+":"") + F(n,d);
+let SNAP = null, MARKET = null, SUGGEST = null;
+let pendingWatchlist = null;   // user's unsaved selection
 
+/* Authenticated POST. If the server is locked (BUDAPILOT_DASHBOARD_TOKEN), ask once and
+   remember; a 401 clears the stored token so the next click asks again. */
+async function post(url, body) {
+  const headers = {"Content-Type": "application/json"};
+  if (SNAP && SNAP.locked) {
+    let tok = localStorage.getItem("bp.token");
+    if (!tok) { tok = prompt("This dashboard is locked. Enter the dashboard token:"); if (!tok) return {error: "cancelled"}; localStorage.setItem("bp.token", tok); }
+    headers["X-Dashboard-Token"] = tok;
+  }
+  const r = await fetch(url, {method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body)});
+  if (r.status === 401) { localStorage.removeItem("bp.token"); return {error: "wrong dashboard token — try again"}; }
+  return r.json();
+}
+function toast(msg, ok=true) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.borderColor = ok ? "#1f6b41" : "#7a2a2a"; t.className = "toast on";
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = "toast", 2600);
+}
+
+/* ---------- small charts ---------- */
+function sparkline(vals, w=300, h=54, stroke) {
+  if (!vals || vals.length < 2) return "";
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi-lo)||1;
+  const pts = vals.map((v,i) => [ (i/(vals.length-1))*w, h-((v-lo)/span)*(h-6)-3 ]);
+  const d = pts.map(p => p.join(",")).join(" ");
+  const up = vals[vals.length-1] >= vals[0];
+  const col = stroke || (up ? "#2fd47a" : "#ff5c5c");
+  const id = "g"+Math.random().toString(36).slice(2,8);
+  return `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".35"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    <polygon fill="url(#${id})" points="0,${h} ${d} ${w},${h}"/>
+    <polyline fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round" points="${d}"/>`;
+}
+function donut(parts) {
+  const total = parts.reduce((a,p)=>a+p.n,0) || 1;
+  let acc = 0;
+  const segs = parts.map(p => {
+    const len = p.n/total*100, s = `<circle r="15.9" cx="18" cy="18" fill="none" stroke="${p.color}" stroke-width="3.6" stroke-dasharray="${len} ${100-len}" stroke-dashoffset="${25-acc}"/>`;
+    acc += len; return s;
+  }).join("");
+  return `<circle r="15.9" cx="18" cy="18" fill="none" stroke="#222c3a" stroke-width="3.6"/>${segs}<text x="18" y="19.5" text-anchor="middle" font-size="7" fill="#e8edf3" font-weight="700">${total===1&&!parts.some(p=>p.n)?0:parts.reduce((a,p)=>a+p.n,0)}</text>`;
+}
+
+/* ---------- header ---------- */
+function renderHeader(d) {
+  const p = d.provider || {};
+  const pc = document.getElementById("providerchip");
+  const primary = p.stubbed ? "stub agents" : (p.name==="anthropic" ? "Claude" : p.name==="gemini" ? "Gemini" : p.name);
+  const fb = p.fallback ? ` → ${p.fallback==="gemini"?"Gemini":"Claude"} fallback` : "";
+  pc.innerHTML = `<span class="dot ${p.stubbed?'off':''}"></span><b>${esc(primary)}</b>${esc(fb)}`;
+  pc.className = "chip " + (p.stubbed ? "" : p.name==="anthropic" ? "claude" : "gemini");
+  const bc = document.getElementById("brokerchip");
+  const live = /Alpaca/.test(p.broker||"");
+  bc.textContent = (live ? "Alpaca PAPER broker" : "simulated broker") + (d.locked ? " · 🔒" : "");
+  bc.className = "chip " + (live ? "warn" : "");
+  document.getElementById("barchip").textContent = `bar #${d.bar_count}` + (!d.running ? " · finished" : d.paused ? " · paused" : "");
+  const lb = document.getElementById("loopbtn");
+  lb.disabled = false;
+  if (!d.running) { lb.textContent = "▶ Restart loop"; lb.className = "primary"; lb.title = "The budget is spent. Start a fresh run with the same limits."; }
+  else if (d.paused) { lb.textContent = "▶ Start loop"; lb.className = "primary"; }
+  else { lb.textContent = "⏸ Stop loop"; lb.className = ""; }
+  if (d.locked) lb.title += " (token required)";
+  const bc2 = document.getElementById("budgetchip");
+  if (d.budget_left_s != null) {
+    budgetDeadline = Date.now() + d.budget_left_s*1000; bc2.style.display = "inline-flex"; tickBudget();
+  } else { budgetDeadline = null; bc2.style.display = "none"; }
+  const dg = document.getElementById("degradedchip");
+  dg.textContent = d.degradations ? `${d.degradations} degradation${d.degradations>1?"s":""} this session` : "all agents nominal";
+  dg.className = "chip " + (d.degradations ? "warn" : "ok");
+  document.getElementById("debatechip").style.display = p.debate ? "inline-flex" : "none";
+  document.getElementById("deepmodel").textContent = `A8 · ${esc((d.panel.find(g=>g.key==="pm")||{}).model||"")} at high effort · on demand`;
+}
+let nextBarDeadline = null, intervalS = null, budgetDeadline = null;
+const dur = s => s >= 3600 ? `${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m` : s >= 60 ? `${Math.floor(s/60)}m ${Math.round(s%60)}s` : `${Math.round(s)}s`;
+function tickNextBar() {
+  const el = document.getElementById("nextbar"), fill = document.getElementById("nextbarfill");
+  if (SNAP && (SNAP.paused || !SNAP.running)) { el.textContent = SNAP.running ? "paused — stops still armed" : "loop finished"; fill.style.width = "0%"; return; }
+  if (!nextBarDeadline || !intervalS) { el.textContent = "next bar —"; fill.style.width = "0%"; return; }
+  const left = Math.max(0, (nextBarDeadline - Date.now())/1000);
+  el.textContent = left > 0 ? `next bar in ${dur(left)}` : "agents deliberating…";
+  fill.style.width = `${Math.min(100, 100 - left/intervalS*100)}%`;
+}
+function tickBudget() {
+  if (!budgetDeadline) return;
+  const left = Math.max(0, (budgetDeadline - Date.now())/1000);
+  const c = document.getElementById("budgetchip");
+  c.textContent = left > 0 ? `⏱ stops in ${dur(left)}` : "⏱ time budget spent";
+  c.className = "chip " + (left < 300 ? "warn" : "");
+}
+setInterval(() => { tickNextBar(); tickBudget(); }, 1000);
+async function toggleLoop() {
+  if (!SNAP) return;
+  const cmd = (SNAP.paused || !SNAP.running) ? "start" : "stop";
+  const j = await post(`/api/loop/${cmd}`);
+  if (j.error) { toast(j.error, false); return; }
+  toast(cmd === "stop" ? "Loop paused — no new decisions; stops and exits still run."
+        : j.relaunched ? "Loop restarted with a fresh time budget." : "Loop resumed.");
+  SNAP.paused = j.paused; SNAP.running = j.running; renderHeader(SNAP); tickNextBar();
+}
+
+/* ---------- KPIs ---------- */
+function renderKpis(d) {
+  const eq = d.equity.length ? d.equity[d.equity.length-1] : null;
+  const first = d.equity.length ? d.equity[0] : null;
+  document.getElementById("equity").textContent = eq ? money(eq.equity) : "—";
+  const pnl = eq && first ? eq.equity - first.equity : null;
+  const pnlEl = document.getElementById("pnl");
+  pnlEl.textContent = pnl===null ? "" : `${pnl>=0?"+":"−"}${money(Math.abs(pnl))} (${signed(first.equity?pnl/first.equity*100:0)}%) this session`;
+  pnlEl.className = "sub " + (pnl===null?"":pnl>=0?"pos":"neg");
+  document.getElementById("spark").innerHTML = sparkline(d.equity.map(p=>p.equity));
+  document.getElementById("cash").textContent = eq ? money(eq.cash) : "—";
+  document.getElementById("cashsub").textContent = eq && eq.equity ? `${F(eq.cash/eq.equity*100,1)}% of equity` : "";
+  const exp = eq ? eq.exposure_pct*100 : 0;
+  document.getElementById("exposure").textContent = eq ? F(exp,1)+"%" : "—";
+  document.getElementById("expfill").style.width = `${Math.min(100, exp/(d.limits.max_exposure_pct*100)*100)}%`;
+  document.getElementById("exposurecap").textContent = `cap ${d.limits.max_exposure_pct*100}% · ${d.limits.max_position_pct*100}% per symbol`;
+  document.getElementById("openpos").textContent = d.positions.length;
+  document.getElementById("opencap").textContent = `max ${d.limits.max_open} · ${d.limits.max_candidates} candidates per bar`;
+  const a = d.analytics || {};
+  const r = a.risk || {approved:0,total:0};
+  document.getElementById("approval").textContent = r.total ? `${F(r.approved/r.total*100,0)}%` : "—";
+  document.getElementById("approvalsub").textContent = r.total ? `${r.approved} approved of ${r.total} rulings` : "no rulings yet";
+}
+function renderSession(s) {
+  const banner = document.getElementById("halt");
+  if (s && s.halted) { banner.className = "halt on"; banner.innerHTML = `<b>TRADING HALTED</b> — ${esc(s.halt_reason)}. New entries blocked; exits still run.`; }
+  else banner.className = "halt";
+  const dd = document.getElementById("drawdown");
+  if (s && s.drawdown_pct !== undefined) {
+    dd.textContent = F(s.drawdown_pct*100, 2) + "%";
+    dd.className = "stat " + (s.halted ? "neg" : s.drawdown_pct > s.max_drawdown_pct*0.6 ? "" : "pos");
+    document.getElementById("ddfill").style.width = `${Math.min(100, s.drawdown_pct/s.max_drawdown_pct*100)}%`;
+    document.getElementById("ddlimit").textContent = `kill-switch at ${F(s.max_drawdown_pct*100,0)}% · peak ${money(s.day_peak_equity)}`;
+  } else dd.textContent = "—";
+  const cd = Object.entries((s && s.cooldown_until) || {});
+  document.getElementById("cooldowns").textContent = cd.length ? "cooling: " + cd.map(([k,v]) => `${k} (${Math.max(0, v - s.bar_index)} bars)`).join(", ") : "";
+}
+
+/* ---------- market tape ---------- */
+function currentSelection() { return pendingWatchlist || (SNAP ? SNAP.watchlist : []); }
+function renderTape() {
+  const el = document.getElementById("tape");
+  const sel = new Set(currentSelection());
+  const rows = MARKET ? MARKET.symbols : [];
+  const universe = SNAP ? SNAP.universe : [];
+  const byRow = Object.fromEntries(rows.map(r => [r.symbol, r]));
+  const order = [...rows.map(r=>r.symbol), ...universe.filter(s => !byRow[s])];
+  el.innerHTML = order.map(sym => {
+    const r = byRow[sym];
+    const on = sel.has(sym);
+    if (!r) return `<div class="tile off"><div class="top"><span class="sym">${esc(sym)}</span><input type="checkbox" class="toggle" ${on?"checked":""} onchange="toggleSymbol('${sym}', this.checked)"></div>
+      <div class="sub">not on the desk — toggle to add</div></div>`;
+    const f = r.features || {};
+    const chg = r.change_pct;
+    return `<div class="tile ${r.held?"held":""} ${on?"":"off"}" id="tile-${sym.replace('/','-')}">
+      <div class="top"><span class="sym">${esc(sym)} ${r.held?'<span class="tag up">HELD</span>':''}</span>
+        <input type="checkbox" class="toggle" ${on?"checked":""} onchange="toggleSymbol('${sym}', this.checked)" title="include in watchlist"></div>
+      <div class="price mono" data-price>${px(r.price)}</div>
+      <div class="chg ${chg>=0?"pos":"neg"}">${signed(chg)}% <span class="muted" style="font-weight:400">over ${r.bars} bars</span></div>
+      <svg viewBox="0 0 200 38" preserveAspectRatio="none">${sparkline(r.spark, 200, 38)}</svg>
+      <div class="tags">
+        ${f.trend_score!==undefined?`<span class="tag ${f.trend_score>0?"up":"dn"}">trend ${signed(f.trend_score,2)}</span>`:""}
+        ${f.rsi_14!=null?`<span class="tag">RSI ${F(f.rsi_14,0)}</span>`:""}
+        ${f.atr_pct!=null?`<span class="tag">ATR ${F(f.atr_pct*100,2)}%</span>`:""}
+        ${f.ema_cross&&f.ema_cross!=="NONE"?`<span class="tag ${f.ema_cross==="GOLDEN"?"up":"dn"}">${f.ema_cross.toLowerCase()} cross</span>`:""}
+      </div>
+      <div class="sub mono" style="font-size:10.5px">H ${px(r.high)} · L ${px(r.low)}</div>
+    </div>`;
+  }).join("");
+  document.getElementById("wlcount").textContent = `${sel.size} on watchlist`;
+  const dirty = pendingWatchlist && JSON.stringify([...pendingWatchlist].sort()) !== JSON.stringify([...(SNAP?SNAP.watchlist:[])].sort());
+  document.getElementById("applywl").disabled = !dirty;
+  document.getElementById("marketts").textContent = MARKET ? "· " + new Date(MARKET.ts).toLocaleTimeString() : "";
+}
+function toggleSymbol(sym, on) {
+  const sel = new Set(currentSelection());
+  on ? sel.add(sym) : sel.delete(sym);
+  pendingWatchlist = [...sel];
+  renderTape(); if (SUGGEST) renderSuggest();
+}
+async function applyWatchlist() {
+  if (!pendingWatchlist) return;
+  const j = await post("/api/watchlist", {symbols: pendingWatchlist});
+  if (j.error) { toast(j.error, false); return; }
+  toast(`Watchlist updated: ${j.symbols.join(", ")} — applies next bar`);
+  pendingWatchlist = null;
+  if (SNAP) SNAP.watchlist = j.symbols;
+  await refreshMarket(true);
+}
+async function refreshMarket(force=false) {
+  try {
+    const r = await fetch("/api/market" + (force ? "?t="+Date.now() : ""));
+    const prev = MARKET ? Object.fromEntries(MARKET.symbols.map(s=>[s.symbol,s.price])) : {};
+    MARKET = await r.json();
+    renderTape();
+    MARKET.symbols.forEach(s => { if (prev[s.symbol] !== undefined && prev[s.symbol] !== s.price) {
+      const t = document.getElementById("tile-"+s.symbol.replace('/','-')); if (t) { t.classList.remove("flash"); void t.offsetWidth; t.classList.add("flash"); } } });
+  } catch (e) { /* keep last tape */ }
+}
+setInterval(refreshMarket, 5000);
+
+/* ---------- suggestions ---------- */
+async function openSuggest() {
+  document.getElementById("drawer").className = "drawer on"; document.getElementById("scrim").className = "scrim on";
+  document.getElementById("suggestlist").innerHTML = `<div class="muted">ranking the universe on live bars…</div>`;
+  try { const r = await fetch("/api/suggest"); SUGGEST = await r.json(); renderSuggest(); }
+  catch (e) { document.getElementById("suggestlist").textContent = "Failed: " + e; }
+}
+function closeSuggest() { document.getElementById("drawer").className = "drawer"; document.getElementById("scrim").className = "scrim"; }
+function renderSuggest() {
+  const sel = new Set(currentSelection());
+  document.getElementById("suggestts").textContent = SUGGEST.ts ? "· " + new Date(SUGGEST.ts).toLocaleTimeString() : "";
+  document.getElementById("suggestlist").innerHTML = SUGGEST.ranked.map((s,i) => `
+    <div class="srow ${s.recommended?"rec":""}" onclick="toggleSymbol('${s.symbol}', !${sel.has(s.symbol)})" style="cursor:pointer">
+      <span class="rank">${i+1}</span>
+      <span><b>${esc(s.symbol)}</b>${s.recommended?' <span class="tag up">REC</span>':''}${sel.has(s.symbol)?' <span class="tag">on list</span>':''}<div class="sub mono" style="font-size:10.5px">${px(s.close)}</div></span>
+      <span class="why">${esc(s.why)}</span>
+      <span class="score ${s.trend_score>0?"pos":"neg"} mono">${signed(s.trend_score,2)}</span>
+    </div>`).join("") || `<div class="muted">no data</div>`;
+}
+function useRecommended() {
+  if (!SUGGEST || !SUGGEST.recommended.length) { toast("Nothing recommended right now — the tape is flat.", false); return; }
+  pendingWatchlist = [...SUGGEST.recommended];
+  renderTape(); renderSuggest(); toast(`Selected ${pendingWatchlist.join(", ")} — click Apply to confirm`);
+}
+
+/* ---------- analytics ---------- */
+function renderAnalytics(d) {
+  const a = d.analytics || {agents:[],actions:[],reject_reasons:[],trades:{},orders:[]};
+  // agent performance: merge rows by agent (a fallback creates a second model row)
+  const byAgent = {};
+  a.agents.forEach(r => { const g = byAgent[r.agent] ||= {agent:r.agent, runs:0, ms:0, ok:0, degraded:0, fallback:0, stub:0, models:new Set(), tin:0, tout:0};
+    g.runs += r.runs; g.ms += r.avg_ms*r.runs; g.ok += r.ok; g.degraded += r.degraded; g.fallback += r.fallback; g.stub += r.stub; g.models.add(r.model); g.tin += r.tokens_in||0; g.tout += r.tokens_out||0; });
+  const rows = Object.values(byAgent).sort((x,y)=>y.ms/y.runs - x.ms/x.runs);
+  const maxMs = Math.max(1, ...rows.map(r=>r.ms/r.runs));
+  document.getElementById("agentperf").innerHTML = rows.map(r => {
+    const avg = r.ms/r.runs, w = avg/maxMs*100;
+    const seg = (n,c) => n ? `<i style="width:${n/r.runs*100}%;background:${c};display:inline-block;border-radius:0"></i>` : "";
+    return `<div class="hbar"><span title="${[...r.models].join(', ')}">${esc(r.agent)}</span>
+      <div class="track" title="${r.ok} ok · ${r.fallback} fallback · ${r.degraded} degraded · ${r.stub} stub">${seg(r.ok,"var(--green)")}${seg(r.fallback,"var(--amber)")}${seg(r.degraded,"var(--red)")}${seg(r.stub,"var(--faint)")}</div>
+      <span class="mono" style="text-align:right">${F(avg,0)}ms</span></div>
+      <div class="hbar" style="margin-top:-4px"><span></span><div class="track" style="height:3px"><i style="width:${w}%;background:var(--blue)"></i></div><span class="sub" style="text-align:right">${r.runs} runs</span></div>`;
+  }).join("") || `<div class="muted">no agent runs yet this session</div>`;
+  const tin = rows.reduce((s,r)=>s+r.tin,0), tout = rows.reduce((s,r)=>s+r.tout,0);
+  document.getElementById("tokens").textContent = tin||tout ? `${F(tin,0)} tokens in · ${F(tout,0)} out this session` : "";
+
+  const acts = {BUY:0,SELL:0,HOLD:0}; a.actions.forEach(x => acts[x.action] = x.n);
+  const parts = [{n:acts.BUY,color:"#2fd47a",k:"BUY"},{n:acts.SELL,color:"#ff5c5c",k:"SELL"},{n:acts.HOLD,color:"#5b6878",k:"HOLD"}];
+  document.getElementById("donut").innerHTML = donut(parts);
+  document.getElementById("donutlegend").innerHTML = parts.map(p=>`<div><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${p.color};margin-right:6px"></i>${p.k} <b>${p.n}</b>${(a.actions.find(x=>x.action===p.k)||{}).avg_conviction?` <span class="muted">avg conv ${F((a.actions.find(x=>x.action===p.k)).avg_conviction)}</span>`:""}</div>`).join("");
+  document.getElementById("rejectreasons").innerHTML = a.reject_reasons.length ? `<div style="color:var(--dim);margin-bottom:4px">Top veto reasons</div>` + a.reject_reasons.map(r=>`<div class="kv"><span style="color:var(--amber)">${esc(r.reason)}</span><span>${r.n}</span></div>`).join("") : "";
+
+  const t = a.trades || {};
+  const wr = t.n ? t.wins/t.n*100 : null;
+  document.getElementById("tradestats").innerHTML = `
+    <div>closed trades<b>${t.n||0}</b></div>
+    <div>win rate<b class="${wr===null?"":wr>=50?"pos":"neg"}">${wr===null?"—":F(wr,0)+"%"}</b></div>
+    <div>avg outcome<b class="${t.avg_pct>=0?"pos":"neg"}">${t.avg_pct==null?"—":signed(t.avg_pct)+"%"}</b></div>
+    <div>best / worst<b class="mono" style="font-size:13px"><span class="pos">${t.best==null?"—":signed(t.best)}</span> / <span class="neg">${t.worst==null?"—":signed(t.worst)}</span></b></div>
+    <div>stop-outs<b class="neg">${t.stops||0}</b></div>
+    <div>take-profits<b class="pos">${t.takes||0}</b></div>`;
+}
+
+/* ---------- desk ---------- */
 function renderAgentCard(group) {
   const cards = group.cards.map(c => {
     const o = c.output || {};
     let body = "";
     if (group.key === "technical") {
-      body = `<div class="kv"><span>direction</span><span class="${actClass(o.direction)}">${esc(o.direction)}</span></div>
+      body = `<div class="kv"><span>direction</span><span class="${actClass(o.direction)}"><b>${esc(o.direction)}</b></span></div>
               <div class="kv"><span>conviction</span><span>${F(o.conviction)}</span></div>
-              <div class="kv"><span>invalidation</span><span>${F(o.invalidation,4)}</span></div>
+              <div class="kv"><span>invalidation</span><span class="mono">${px(o.invalidation)}</span></div>
               <div class="rationale">${esc(o.rationale)}</div>`;
     } else if (group.key === "news") {
-      body = `<div class="kv"><span>sentiment</span><span>${o.sentiment>=0?"+":""}${F(o.sentiment)}</span></div>
+      body = `<div class="kv"><span>sentiment</span><span>${signed(o.sentiment)}</span></div>
               <div class="kv"><span>news risk</span><span class="${esc(o.news_risk)}">${esc(o.news_risk)}</span></div>
               <div class="kv"><span>headlines</span><span>${o.headline_count ?? 0}</span></div>
-              <div class="rationale">${esc(o.rationale)}</div>`;
+              ${(o.catalysts||[]).length?`<div class="rationale">${o.catalysts.map(x=>"• "+esc(x)).join("<br>")}</div>`:`<div class="rationale">${esc(o.rationale)}</div>`}`;
     } else if (group.key === "risk_analyst") {
-      body = `<div class="kv"><span>size mult</span><span>${F(o.size_multiplier)}×</span></div>
+      body = `<div class="kv"><span>size multiplier</span><span><b>${F(o.size_multiplier)}×</b></span></div>
               <div class="kv"><span>stop</span><span>${F(o.suggested_stop_atr,1)}×ATR</span></div>
-              <div class="rationale">${(o.concerns||[]).map(c=>"• "+esc(c)).join("<br>") || esc(o.rationale)}</div>`;
+              <div class="rationale">${(o.concerns||[]).map(x=>"• "+esc(x)).join("<br>") || esc(o.rationale)}</div>`;
     } else if (group.key === "scout") {
-      body = (o.candidates||[]).map(c =>
-        `<div class="kv"><span>${esc(c.symbol)}${c.vetoed?" ⛔":""}</span><span>${F(c.trend_score)}</span></div>
-         <div class="rationale" style="font-size:11px">${esc(c.vetoed ? c.veto_reason : c.thesis)}</div>`).join("")
+      body = (o.candidates||[]).map(x =>
+        `<div class="kv"><span><b>${esc(x.symbol)}</b>${x.vetoed?" ⛔":""}</span><span class="mono ${x.trend_score>0?"pos":"neg"}">${signed(x.trend_score)}</span></div>
+         <div class="rationale" style="font-size:11.5px;margin-top:0">${esc(x.vetoed ? x.veto_reason : x.thesis)}</div>`).join("")
+         + (o.market_note?`<div class="sub" style="margin-top:6px">${esc(o.market_note)}</div>`:"")
          || `<div class="muted">no candidates</div>`;
     } else if (group.key === "regime") {
-      body = `<div class="kv"><span>regime</span><span>${esc(o.regime)}</span></div>
-              <div class="kv"><span>vol pct</span><span>${F(o.realized_vol_pct,0)}</span></div>
-              <div class="kv"><span>btc drift</span><span>${F((o.btc_dominance_drift||0)*100)}%</span></div>
+      body = `<div class="kv"><span>regime</span><span><b>${esc(o.regime)}</b></span></div>
+              <div class="kv"><span>vol percentile</span><span>${F(o.realized_vol_pct,0)}</span></div>
+              <div class="kv"><span>BTC drift</span><span>${signed((o.btc_dominance_drift||0)*100)}%</span></div>
               <div class="rationale">${esc(o.rationale)}</div>`;
     } else if (group.key === "bull" || group.key === "bear") {
-      const cls = group.key;
-      body = `<div class="bcase ${cls}">
+      body = `<div class="bcase ${group.key}">
           <div class="kv"><span>confidence</span><span>${F(o.confidence)}</span></div>
           <div class="rationale">${esc(o.strongest_point)}</div>
-          <ul>${(o.claims||[]).map(c=>`<li>${esc(c)}</li>`).join("")}</ul>
+          <ul>${(o.claims||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
           ${o.rebuttal?`<div class="rationale">↩ ${esc(o.rebuttal)}</div>`:""}
           ${o.conceded?`<div class="conceded">concedes: ${esc(o.conceded)}</div>`:""}
         </div>`;
     } else if (group.key === "pm") {
-      body = `<div class="kv"><span>${esc(o.symbol)}</span>
-                <span class="${actClass(o.action)}" style="font-size:16px;font-weight:700">${esc(o.action)}</span></div>
-              <div class="kv"><span>conviction</span><span>${F(o.conviction)}</span></div>
+      body = `<div class="kv"><span style="font-size:15px;color:var(--ink)"><b>${esc(o.symbol)}</b></span>
+                <span class="${actClass(o.action)}" style="font-size:18px;font-weight:800">${esc(o.action)}</span></div>
+              <div class="kv"><span>conviction</span><span>${F(o.conviction)} · size ${F(o.size_multiplier,2)}× · stop ${F(o.stop_atr,1)}×ATR</span></div>
               <div class="rationale">${esc(o.rationale)}</div>
               ${(o.overrode||[]).length ? `<div class="over"><b>OVERRODE</b><ul>${o.overrode.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:""}`;
     }
-    return `<div class="out">${c.symbol?`<div class="sym">${esc(c.symbol)}</div>`:""}${body}
-            ${c.error?`<div class="degraded" style="font-size:10px">⚠ ${esc(c.error)}</div>`:""}</div>`;
+    const meta = [c.model && c.model!=="stub" ? c.model : "", c.latency_ms!=null ? c.latency_ms+" ms" : "", c.tokens_out ? c.tokens_out+" tok" : ""].filter(Boolean).join(" · ");
+    return `<div class="out">${c.symbol?`<div class="sym">${esc(c.symbol)}${c.served_by_fallback?' <span class="badge fb">via fallback</span>':''}</div>`:(c.served_by_fallback?'<div class="sym"><span class="badge fb">via fallback</span></div>':'')}${body}
+            ${c.error?`<div class="err">⚠ ${esc(c.error)}</div>`:""}
+            <div class="sub mono" style="font-size:10px;margin-top:5px;color:var(--faint)">${esc(meta)}</div></div>`;
   }).join("");
 
-  const st = group.cards[0]?.status || "";
-  return `<div class="agent ${group.key==='pm'?'pm':''}">
-    <div class="head">
-      <span class="name">${esc(group.label)}</span>
-      <span class="badge ${modelClass(group.model)}">${esc(group.model)}</span>
+  const first = group.cards[0];
+  const st = !first ? "idle" : first.cached ? "cached" : first.status;
+  const stLabel = !first ? (group.note || "waiting") : first.cached ? `${group.note} · ${first.status}` : first.status;
+  const open = openAgents.has(group.key);
+  return `<div class="agent ${group.key==='pm'?'pm':''} ${open?'open':''}" data-key="${group.key}">
+    <div class="head toggler" onclick="toggleAgent('${group.key}')">
+      <span class="name"><span class="caret">▶</span>${esc(group.label)}</span>
+      <span class="badge ${modelClass(group.model)}" title="${group.fallback_model?'fallback: '+esc(group.fallback_model):''}">${esc(group.model)}</span>
     </div>
-    <div class="head">
-      <span class="chip ${esc(st)}">${esc(st||"—")}</span>
-      <span class="sub">${group.cards[0]?.latency_ms ?? "—"} ms</span>
-    </div>
-    ${cards || '<div class="muted">waiting…</div>'}
+    <div class="head"><span class="status ${esc(st)}">${esc(stLabel)}</span>
+      <span class="sub">${first && !first.cached ? (first.latency_ms ?? "—") + " ms" : ""}${group.cards.some(c=>c.served_by_fallback)?' <span class="badge fb">fallback</span>':''}</span></div>
+    <div class="summary">${summaryLine(group)}</div>
+    <div class="details">${cards || `<div class="muted" style="font-size:12px">${esc(group.note || "waiting for the first bar…")}</div>`}</div>
   </div>`;
 }
 
-function spark(series) {
-  if (!series.length) return "";
-  const vals = series.map(p => p.equity);
-  const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi-lo)||1;
-  const pts = vals.map((v,i) => `${(i/(vals.length-1||1))*300},${60-((v-lo)/span)*56-2}`).join(" ");
-  const up = vals[vals.length-1] >= vals[0];
-  return `<polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/>`;
+/* One line per agent: enough to read the desk at a glance without opening anything. */
+function summaryLine(group) {
+  if (!group.cards.length) return `<span class="muted">${esc(group.note || "waiting…")}</span>`;
+  const items = group.cards.map(c => {
+    const o = c.output || {}, s = c.symbol ? esc(c.symbol.split("/")[0]) : "";
+    switch (group.key) {
+      case "technical":   return `<span>${s} <b class="${actClass(o.direction)}">${esc(o.direction)}</b> ${F(o.conviction)}</span>`;
+      case "news":        return `<span>${s} <b class="${esc(o.news_risk)}">${esc(o.news_risk)}</b> ${signed(o.sentiment)}</span>`;
+      case "risk_analyst":return `<span>${s} <b>${F(o.size_multiplier)}×</b> ${F(o.suggested_stop_atr,1)}ATR</span>`;
+      case "scout":       return (o.candidates||[]).map(x=>`<span>${x.vetoed?"⛔ ":""}<b>${esc(x.symbol.split("/")[0])}</b> <span class="mono ${x.trend_score>0?"pos":"neg"}">${signed(x.trend_score)}</span></span>`).join("") || `<span class="muted">no candidates</span>`;
+      case "regime":      return `<span><b>${esc(o.regime)}</b> · vol p${F(o.realized_vol_pct,0)} · BTC ${signed((o.btc_dominance_drift||0)*100,1)}%</span>`;
+      case "bull": case "bear": return `<span>${s} <b>${F(o.confidence)}</b> ${esc((o.strongest_point||"").slice(0,70))}${(o.strongest_point||"").length>70?"…":""}</span>`;
+      case "pm":          return `<span style="font-size:13px"><b>${esc(o.symbol)}</b> <b class="${actClass(o.action)}" style="font-size:15px">${esc(o.action)}</b> conv ${F(o.conviction)} · size ${F(o.size_multiplier,2)}×${(o.overrode||[]).length?` · <span style="color:var(--amber)">overrode ${o.overrode.length}</span>`:""}</span>`;
+      default: return "";
+    }
+  }).join("");
+  const err = group.cards.filter(c=>c.error).length;
+  return items + (err ? `<span class="neg">⚠ ${err} error${err>1?"s":""}</span>` : "");
+}
+const openAgents = new Set(JSON.parse(localStorage.getItem("bp.openAgents") || "[]"));
+function toggleAgent(key) {
+  openAgents.has(key) ? openAgents.delete(key) : openAgents.add(key);
+  localStorage.setItem("bp.openAgents", JSON.stringify([...openAgents]));
+  const el = document.querySelector(`.agent[data-key="${key}"]`); if (el) el.classList.toggle("open", openAgents.has(key));
+}
+function setAllAgents(open) {
+  openAgents.clear();
+  if (open && SNAP) SNAP.panel.forEach(g => openAgents.add(g.key));
+  localStorage.setItem("bp.openAgents", JSON.stringify([...openAgents]));
+  document.querySelectorAll(".agent").forEach(el => el.classList.toggle("open", open));
 }
 
+/* ---------- heatmap ---------- */
 function heatColour(score) {
   if (score === null || score === undefined) return "#1b2027";
-  // Grey -> amber. Disagreement is interesting, not bad, so it is not red.
   const a = Math.min(Math.max(score, 0), 1);
-  return `rgba(210,153,34,${0.12 + a * 0.88})`;
+  return `rgba(242,177,52,${0.12 + a * 0.88})`;
 }
-
 function renderHeatmap(h) {
   const el = document.getElementById("heat");
-  if (!h || !h.symbols.length) {
-    el.innerHTML = `<tr><td class="muted">no decisions recorded yet</td></tr>`;
-    return;
-  }
+  if (!h || !h.symbols.length) { el.innerHTML = `<tr><td class="muted">no decisions recorded yet</td></tr>`; return; }
   el.innerHTML = h.symbols.map((sym, i) => {
     const cells = h.rows[i].map(c => {
-      const t = c ? `${sym} — disagreement ${F(c.score)}, tech ${F(c.technical_signed)}, `
-                    + `news ${F(c.news_sentiment)}, size ${F(c.risk_multiplier)}×`
-                    + (c.overrode_count ? `, PM overrode ${c.overrode_count}` : "")
-                  : `${sym} — not a candidate this bar`;
+      const t = c ? `${sym} — disagreement ${F(c.score)}, tech ${F(c.technical_signed)}, news ${F(c.news_sentiment)}, size ${F(c.risk_multiplier)}×` + (c.overrode_count ? `, PM overrode ${c.overrode_count}` : "") : `${sym} — not a candidate this bar`;
       return `<td class="cell" style="background:${heatColour(c ? c.score : null)}" title="${esc(t)}"></td>`;
     }).join("");
     return `<tr><td class="sym">${esc(sym)}</td>${cells}</tr>`;
   }).join("");
 }
 
-function renderSession(s) {
-  const banner = document.getElementById("halt");
-  if (s && s.halted) {
-    banner.className = "halt on";
-    banner.innerHTML = `<b>TRADING HALTED</b> — ${esc(s.halt_reason)}`;
-  } else {
-    banner.className = "halt";
-  }
-
-  const dd = document.getElementById("drawdown");
-  if (s && s.drawdown_pct !== undefined) {
-    dd.textContent = F(s.drawdown_pct * 100, 2) + "%";
-    dd.className = "stat " + (s.halted ? "sell" : s.drawdown_pct > s.max_drawdown_pct * 0.6 ? "" : "buy");
-    document.getElementById("ddlimit").textContent =
-      `limit ${F(s.max_drawdown_pct * 100, 0)}% · peak $${F(s.day_peak_equity, 0)}`;
-  } else { dd.textContent = "—"; }
-
-  const cd = Object.entries((s && s.cooldown_until) || {});
-  document.getElementById("cooldowns").textContent = cd.length
-    ? "cooling: " + cd.map(([k, v]) => `${k} (${Math.max(0, v - s.bar_index)}b)`).join(", ")
-    : "";
-}
-
-function render(d) {
-  const eq = d.equity.length ? d.equity[d.equity.length-1] : null;
-  document.getElementById("equity").textContent  = eq ? money(eq.equity) : "—";
-  document.getElementById("cash").textContent    = eq ? money(eq.cash) : "—";
-  document.getElementById("exposure").textContent= eq ? F(eq.exposure_pct*100,1)+"%" : "—";
-  document.getElementById("exposurecap").textContent = "cap " + (d.limits.max_exposure_pct*100) + "%";
-  document.getElementById("openpos").textContent = d.positions.length;
-  document.getElementById("opencap").textContent = "max " + d.limits.max_open;
-  document.getElementById("spark").innerHTML     = spark(d.equity);
-  document.getElementById("barid").textContent   = d.bar_id || "";
-  document.getElementById("barinfo").textContent = "bar #" + d.bar_count;
-  document.getElementById("degraded").textContent= d.degradations ? d.degradations + " degradations" : "all agents nominal";
-  document.getElementById("degraded").className  = "sub " + (d.degradations ? "fallback" : "ok");
-
-  document.getElementById("agents").innerHTML = d.panel.map(renderAgentCard).join("");
-  renderHeatmap(d.heatmap);
-  renderSession(d.session);
-
+/* ---------- tables ---------- */
+const tm = s => s ? new Date(s).toLocaleTimeString() : "—";
+function renderTables(d) {
   document.getElementById("risks").innerHTML = d.risks.map(r => `<tr>
-    <td>${esc(r.symbol)}</td><td class="${actClass(r.action)}">${esc(r.action)}</td>
+    <td><b>${esc(r.symbol)}</b></td><td class="${actClass(r.action)}">${esc(r.action)}</td>
     <td class="${r.approved?'app':'rej'}">${r.approved?'APPROVED':'REJECTED'}</td>
-    <td class="${r.approved?'':'rej'}">${esc(r.reason)}</td></tr>`).join("")
-    || `<tr><td colspan="4" class="muted">no rulings yet</td></tr>`;
-
+    <td class="mono">${r.qty?F(r.qty,6):"—"}</td><td class="mono">${r.notional?money(r.notional):"—"}</td>
+    <td class="${r.approved?'':'rej'}">${esc(r.reason)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">no rulings yet</td></tr>`;
   document.getElementById("orders").innerHTML = d.orders.map(o => `<tr>
-    <td>${esc(o.symbol)}</td><td class="${o.side==='buy'?'buy':'sell'}">${esc(o.side)}</td>
-    <td>${F(o.qty,6)}</td><td>${esc(o.status)}</td><td>${F(o.filled_avg_price,4)}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="muted">no orders yet</td></tr>`;
-
+    <td class="mono">${tm(o.ts)}</td><td><b>${esc(o.symbol)}</b></td><td class="${o.side==='buy'?'buy':'sell'}">${esc(o.side)}</td><td>${esc(o.type)}</td>
+    <td class="mono">${F(o.qty,6)}</td><td>${esc(o.status)}</td><td class="mono">${px(o.filled_avg_price)}</td><td class="muted">${esc(o.intent)}</td></tr>`).join("")
+    || `<tr><td colspan="8" class="muted">no orders yet</td></tr>`;
   document.getElementById("positions").innerHTML = d.positions.map(p => `<tr>
-    <td>${esc(p.symbol)}</td><td>${F(p.qty,6)}</td><td>${F(p.entry,4)}</td>
-    <td class="sell">${F(p.stop_px,4)}</td><td class="buy">${F(p.take_px,4)}</td>
-    <td class="${p.broker_stop_order_id?'ok':'rej'}">${p.broker_stop_order_id?'armed':'SOFTWARE ONLY'}</td></tr>`).join("")
+    <td><b>${esc(p.symbol)}</b></td><td class="mono">${F(p.qty,6)}</td><td class="mono">${px(p.entry)}</td>
+    <td class="sell mono">${px(p.stop_px)}</td><td class="buy mono">${px(p.take_px)}</td>
+    <td class="${p.broker_stop_order_id?'app':'rej'}">${p.broker_stop_order_id?'armed at broker':'SOFTWARE ONLY'}</td></tr>`).join("")
     || `<tr><td colspan="6" class="muted">flat</td></tr>`;
-
   document.getElementById("lessons").innerHTML = d.lessons.map(l =>
-    `<div style="border-top:1px solid var(--line);padding:6px 0">
-       <span class="${l.outcome_pct>=0?'buy':'sell'}">${esc(l.symbol)} ${l.outcome_pct>=0?"+":""}${F(l.outcome_pct)}%</span>
+    `<div style="border-top:1px solid var(--line);padding:8px 0">
+       <span class="${l.outcome_pct>=0?'pos':'neg'}"><b>${esc(l.symbol)}</b> ${signed(l.outcome_pct)}%</span>
        <span class="muted"> (${esc(l.exit_reason)})</span>
-       <div class="rationale">${esc(l.lesson)}</div></div>`).join("")
-    || `<div class="muted">no closed trades yet</div>`;
-
-  if (!document.getElementById("deepbtns").dataset.built) {
-    const syms = [...new Set(d.panel.flatMap(g => g.cards.map(c=>c.symbol)).filter(Boolean))];
-    if (syms.length) {
-      document.getElementById("deepbtns").dataset.built = "1";
-      document.getElementById("deepbtns").innerHTML = syms.map(s =>
-        `<button onclick="deepAnalyse('${s}')">${esc(s)}</button>`).join("");
-    }
-  }
+       <div class="rationale">${esc(l.lesson)}</div></div>`).join("") || `<div class="muted">no closed trades yet</div>`;
+  document.getElementById("proposals").innerHTML = d.proposals.map(p => `<tr>
+    <td class="mono muted">${esc((p.bar_id||"").split("-").pop())}</td><td><b>${esc(p.symbol)}</b></td><td class="${actClass(p.action)}">${esc(p.action)}</td>
+    <td>${F(p.conviction)}</td><td>${F(p.size_multiplier,2)}×</td><td class="sub">${esc(p.rationale)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">no proposals yet</td></tr>`;
 }
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x===b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-"+b.dataset.tab));
+});
 
+/* ---------- deep ---------- */
 async function deepAnalyse(symbol) {
   const el = document.getElementById("deep");
   el.className = "muted";
-  el.textContent = `Running claude-opus-5 at high effort on ${symbol}… this takes a while on purpose.`;
+  el.textContent = `Running the deep model at high effort on ${symbol}… this takes a while on purpose.`;
   try {
-    const r = await fetch(`/api/deep/${encodeURIComponent(symbol)}`, {method:"POST"});
-    const j = await r.json();
+    const j = await post(`/api/deep/${encodeURIComponent(symbol)}`);
     if (j.error) { el.textContent = "Error: " + j.error; return; }
     const a = j.analysis;
     el.className = "";
     el.innerHTML = `<div class="sub">${esc(j.model)} · ${j.latency_ms} ms · ${esc(j.status)}</div>
       <h3 style="margin:8px 0 4px">${esc(a.symbol)} — <span class="${actClass(a.verdict)}">${esc(a.verdict)}</span>
-        <span class="muted">conviction ${F(a.conviction)}</span></h3>
+        <span class="muted" style="font-weight:400">conviction ${F(a.conviction)}</span></h3>
       <div class="rationale">${esc(a.thesis)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px">
         <div><b class="buy">BULL</b><ul>${(a.bull_case||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>
@@ -348,7 +722,26 @@ async function deepAnalyse(symbol) {
   } catch (e) { el.textContent = "Request failed: " + e; }
 }
 
+/* ---------- main render ---------- */
+function render(d) {
+  SNAP = d;
+  intervalS = d.interval_s;
+  nextBarDeadline = d.next_bar_in_s != null ? Date.now() + d.next_bar_in_s*1000 : null;
+  tickNextBar();
+  renderHeader(d);
+  renderKpis(d);
+  renderSession(d.session);
+  document.getElementById("agents").innerHTML = d.panel.map(renderAgentCard).join("");
+  document.getElementById("barid").textContent = d.bar_id || "";
+  renderHeatmap(d.heatmap);
+  renderAnalytics(d);
+  renderTables(d);
+  renderTape();
+  document.getElementById("deepbtns").innerHTML = d.watchlist.map(s => `<button onclick="deepAnalyse('${s}')">${esc(s)}</button>`).join("");
+}
+
 render({{ snapshot | tojson }});
+refreshMarket();
 const es = new EventSource("/stream");
 es.addEventListener("update", e => render(JSON.parse(e.data)));
 </script>

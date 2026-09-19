@@ -7,6 +7,8 @@ bad days -- a feed that raises, an agent that dies, a bar that explodes.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from budapilot.agents.base import AgentRuntime
@@ -66,6 +68,63 @@ async def test_every_agent_run_is_journalled_with_its_model(journal):
     assert {r["agent"] for r in runs} >= {"scout", "technical", "news", "pm", "regime"}
     assert all(r["output_json"] for r in runs)
     assert all(r["status"] == "stub" for r in runs)
+
+
+# -- start / stop and the time budget ---------------------------------------------------
+
+
+async def test_a_paused_loop_decides_nothing_but_still_feeds_its_stops(journal, monkeypatch):
+    loop = build_loop(journal)
+    fed: list[str] = []
+
+    async def spy_tick():
+        fed.append("tick")
+
+    monkeypatch.setattr(loop, "_tick_stops", spy_tick)
+    loop.pause()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        loop.stop()
+
+    asyncio.get_running_loop().create_task(stop_soon())
+    await loop.run_forever()
+
+    assert loop.bar_count == 0  # no decisions were made
+    assert fed  # ...but protection kept running
+    assert loop.running is False
+
+
+async def test_resume_lets_bars_flow_again(journal):
+    loop = build_loop(journal)
+    loop.pause()
+    loop.resume()
+    await loop.run_forever(max_bars=2)
+    assert loop.bar_count == 2
+
+
+async def test_time_budget_ends_the_loop_without_a_bar_cap(journal):
+    loop = build_loop(journal)
+    # A budget that is already spent on the first check: the loop must exit cleanly
+    # rather than run "just one more bar".
+    await loop.run_forever(max_minutes=1e-9)
+    assert loop.bar_count == 0
+    assert loop.running is False
+    assert loop.deadline is not None
+
+
+async def test_a_relaunched_run_gets_its_full_bar_budget_again(journal):
+    loop = build_loop(journal)
+    await loop.run_forever(max_bars=2)
+    assert loop.bar_count == 2
+    await loop.run_forever(max_bars=2)  # what the dashboard's Start does after a finish
+    assert loop.bar_count == 4, "the second run must not be cut short by the first's bars"
+
+
+async def test_no_budget_means_no_deadline(journal):
+    loop = build_loop(journal)
+    await loop.run_forever(max_bars=1, max_minutes=None)
+    assert loop.deadline is None
 
 
 # -- THE STRUCTURAL PROPERTY ---------------------------------------------------------

@@ -376,6 +376,77 @@ class Journal:
         )
         return rows
 
-    def degradation_count(self) -> int:
-        rows = self.query("SELECT COUNT(*) AS n FROM degradations")
+    def degradation_count(self, since: str | None = None) -> int:
+        rows = (
+            self.query("SELECT COUNT(*) AS n FROM degradations WHERE ts >= ?", (since,))
+            if since
+            else self.query("SELECT COUNT(*) AS n FROM degradations")
+        )
         return rows[0]["n"] if rows else 0
+
+    def last_run_for_agent(self, agent: str, since: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Most recent rows for one agent from this process's session only.
+
+        Scoped by ``since`` so a cached agent's card shows what it last said *today*,
+        not an error from a run last week against a different vendor.
+        """
+        return self.query(
+            "SELECT * FROM agent_runs WHERE agent = ? AND ts >= ? ORDER BY id DESC LIMIT ?",
+            (agent, since, limit),
+        )
+
+    def analytics(self, since: str) -> dict[str, Any]:
+        """Session-scoped desk analytics for the dashboard. Reads only."""
+        agents = self.query(
+            "SELECT agent, model, COUNT(*) AS runs, "
+            "AVG(latency_ms) AS avg_ms, MAX(latency_ms) AS max_ms, "
+            "SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
+            "SUM(status = 'ok') AS ok, SUM(status = 'degraded') AS degraded, "
+            "SUM(status = 'fallback') AS fallback, SUM(status = 'stub') AS stub "
+            "FROM agent_runs WHERE ts >= ? GROUP BY agent, model ORDER BY agent, runs DESC",
+            (since,),
+        )
+        actions = self.query(
+            "SELECT action, COUNT(*) AS n, AVG(conviction) AS avg_conviction "
+            "FROM proposals WHERE ts >= ? GROUP BY action",
+            (since,),
+        )
+        risk = self.query(
+            "SELECT SUM(approved) AS approved, COUNT(*) AS total FROM risk_decisions "
+            "WHERE ts >= ?",
+            (since,),
+        )
+        reasons = self.query(
+            "SELECT reason, COUNT(*) AS n FROM risk_decisions WHERE ts >= ? AND approved = 0 "
+            "GROUP BY reason ORDER BY n DESC LIMIT 6",
+            (since,),
+        )
+        trades = self.query(
+            "SELECT COUNT(*) AS n, SUM(outcome_pct > 0) AS wins, AVG(outcome_pct) AS avg_pct, "
+            "MAX(outcome_pct) AS best, MIN(outcome_pct) AS worst, "
+            "SUM(exit_reason = 'STOP') AS stops, SUM(exit_reason = 'TAKE') AS takes "
+            "FROM lessons WHERE ts >= ?",
+            (since,),
+        )
+        orders = self.query(
+            "SELECT side, intent, COUNT(*) AS n FROM orders WHERE ts >= ? GROUP BY side, intent",
+            (since,),
+        )
+        r = risk[0] if risk else {}
+        t = trades[0] if trades else {}
+        return {
+            "agents": agents,
+            "actions": actions,
+            "risk": {"approved": r.get("approved") or 0, "total": r.get("total") or 0},
+            "reject_reasons": reasons,
+            "trades": {
+                "n": t.get("n") or 0,
+                "wins": t.get("wins") or 0,
+                "avg_pct": t.get("avg_pct"),
+                "best": t.get("best"),
+                "worst": t.get("worst"),
+                "stops": t.get("stops") or 0,
+                "takes": t.get("takes") or 0,
+            },
+            "orders": orders,
+        }

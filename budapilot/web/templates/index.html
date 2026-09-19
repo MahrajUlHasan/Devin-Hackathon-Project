@@ -138,7 +138,7 @@
   .pm .rationale { font-size:14.5px; line-height:1.65; color:#f0f6fc; }
   .over { color:var(--amber); font-size:12px; margin-top:6px; }
   .over li { margin:2px 0; }
-  .err { color:var(--red); font-size:10.5px; margin-top:5px; word-break:break-word; }
+  .err { color:var(--red); font-size:10.5px; margin-top:5px; cursor:help; }
   .bcase { border:1px solid var(--line); border-radius:8px; padding:8px; font-size:11.5px; }
   .bcase.bull { border-color:#1d4d2b; } .bcase.bear { border-color:#5c1f1c; }
   .bcase ul { margin:3px 0 0 14px; padding:0; }
@@ -532,9 +532,15 @@ function shortError(e) {
   if (!e) return "";
   const parts = e.split("; fallback ");
   const one = s => {
-    const m = s.match(/'message':\s*'([^']{5,160})/) || s.match(/"message":\s*"([^"]{5,160})/);
-    if (m) return m[1].split("\n")[0];
-    return s.split(/[{(]/)[0].trim().slice(0, 120);
+    // Known vendor failures get a plain-English label; anything else gets its message.
+    if (/credit balance is too low/i.test(s)) return "Anthropic: no credits on the account";
+    if (/RESOURCE_EXHAUSTED|429/.test(s)) return /gemini|generativelanguage/i.test(s) ? "Gemini: quota exhausted" : "rate limited (429)";
+    if (/503|UNAVAILABLE|overloaded/i.test(s)) return "model overloaded (503)";
+    if (/^timeout/i.test(s)) return "timed out";
+    if (/401|authentication|invalid.*api.key/i.test(s)) return "invalid API key";
+    const m = s.match(/'message':\s*'([^']{5,140})/) || s.match(/"message":\s*"([^"]{5,140})/);
+    if (m) return m[1].split("\n")[0].replace(/\.$/, "");
+    return s.split(/[{(]/)[0].replace(/^\w*Error:\s*/, "").trim().slice(0, 100);
   };
   return parts.length > 1 ? `${one(parts[0])} → fallback: ${one(parts[1])}` : one(parts[0]);
 }
@@ -634,7 +640,7 @@ function renderAgentCard(group) {
     }
     const meta = [c.model && c.model!=="stub" ? c.model : "", c.latency_ms!=null ? c.latency_ms+" ms" : "", c.tokens_out ? c.tokens_out+" tok" : ""].filter(Boolean).join(" · ");
     return `<div class="out">${c.symbol?`<div class="sym">${esc(c.symbol)}${c.served_by_fallback?' <span class="badge fb">via fallback</span>':''}</div>`:(c.served_by_fallback?'<div class="sym"><span class="badge fb">via fallback</span></div>':'')}${body}
-            ${c.error?`<div class="err">⚠ ${esc(c.error)}</div>`:""}
+            ${c.error?`<div class="err" title="${esc(c.error)}">⚠ ${esc(shortError(c.error))} <span class="muted">· stub output shown</span></div>`:""}
             <div class="sub mono" style="font-size:10px;margin-top:5px;color:var(--faint)">${esc(meta)}</div></div>`;
   }).join("");
 
